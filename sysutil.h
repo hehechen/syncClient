@@ -16,7 +16,6 @@ namespace sysutil{
     void fileSend(int desSocket,char *filename);
     void fileRecv(int recvSocket, char *filename, int size);
 
-    //监控文件修改事件
 
 }
 #endif // SYSUTIL_H

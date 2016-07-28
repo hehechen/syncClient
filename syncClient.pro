@@ -15,7 +15,9 @@ SOURCES += main.cpp \
     test/socketTest.cpp \
     test/filerecvtest.cpp \
     threadpool.cpp \
-    test/threadpooltest.cpp
+    test/threadpooltest.cpp \
+    eventloop.cpp \
+    test/inotifytest.cpp
 
 HEADERS += \
     common.h \
@@ -24,4 +26,5 @@ HEADERS += \
     threadpool.h \
     mutexlock.h \
     mutexlockguard.h \
-    condition.h
+    condition.h \
+    eventloop.h
