@@ -8,9 +8,9 @@
 #include "common.h"
 
 using namespace std;
-EventLoop::EventLoop()
+EventLoop::EventLoop(char *root)
 {
-    watch_init(MASK,"/home/chen/syncClient");
+    watch_init(MASK,root);
     epoll_fd = epoll_create(1);
     if(epoll_fd < 0)
         CHEN_LOG(ERROR,"epoll create error");
@@ -86,11 +86,6 @@ void EventLoop::append_dir(int fd,struct inotify_event *event,int mask)
     dirmap.insert(make_pair(wd,string(ndir)));
 }
 
-void EventLoop::handle_sync(char *filename)
-{
-    cout<<"handle_sync............."<<filename<<endl;
-}
-
 void EventLoop::doAction()
 {
     int i = 0;
@@ -102,30 +97,40 @@ void EventLoop::doAction()
         {
             if(event->mask & IN_MOVED_FROM)//重命名
             {
-                CHEN_LOG(DEBUG,"the file/directory %s was rename\n",event->name);
+                cookieMap.insert(make_pair(event->cookie,string(event->name)));
+            }
+            if(event->mask & IN_MOVED_TO)//重命名
+            {
+                auto it = cookieMap.find(event->cookie);
+                if(it!=cookieMap.end())
+                {
+                    handle_rename(it->second.c_str(),event->name);
+                }
+                else
+                    CHEN_LOG(ERROR,"can't find rename cookie");
             }
             if(event->mask & IN_MODIFY)
             {
-                CHEN_LOG(DEBUG,"thie file/directory %s was modified\n",event->name);
-                handle_sync(event->name);
+                handle_modify(event->name);
             }
             if(event->mask & IN_CREATE)
             {
-                CHEN_LOG(DEBUG,"thie file/directory %s was created\n",event->name);
                 if(event->mask & IN_ISDIR)
                 {//这是一个文件夹
                     append_dir(fd,event,MASK);
+                    handle_create(event->name,true);
                 }
-                handle_sync(event->name);
+                else
+                   handle_create(event->name,false);
             }
             if(event->mask & IN_DELETE)
             {
-                CHEN_LOG(DEBUG,"thie file/directory %s was deleted\n",event->name);
                 if(event->mask & IN_ISDIR)
                 {
-                    CHEN_LOG(DEBUG,"this is dir");
+                    handle_delete(event->name,true);
                 }
-                handle_sync(event->name);
+                else
+                    handle_delete(event->name,false);
             }
         }
         else if(event->mask & IN_DELETE_SELF)
@@ -141,4 +146,34 @@ void EventLoop::doAction()
         i += EVENT_SIZE + event->len;
     }
     memset(buffer,0,sizeof(buffer));
+}
+/**
+ * @brief handle_create 创建文件的同步任务
+ * @param filename
+ * @param isDir 是否是文件夹
+ */
+void EventLoop::handle_create(char *filename,bool isDir)
+{
+    if(isDir)
+        CHEN_LOG(DEBUG,"thie directory %s was created\n",filename);
+    else
+        CHEN_LOG(DEBUG,"thie file %s was created\n",filename);
+}
+
+void EventLoop::handle_modify(char *filename)
+{
+   CHEN_LOG(DEBUG,"thie file %s was modified\n",filename);
+}
+
+void EventLoop::handle_rename(const char *oldname,const char *newname)
+{
+    CHEN_LOG(DEBUG,"thie file %s was rename to %s\n",oldname,newname);
+}
+
+void EventLoop::handle_delete(char *filename,bool isDir)
+{
+    if(isDir)
+        CHEN_LOG(DEBUG,"thie directory %s was deleted\n",filename);
+    else
+        CHEN_LOG(DEBUG,"thie file %s was deleted\n",filename);
 }

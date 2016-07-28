@@ -2,7 +2,7 @@
 
 int main()
 {
-    EventLoop loop;
+    EventLoop loop("/home/chen/syncClient");
     while(1)
     {
         loop.loop_once();
