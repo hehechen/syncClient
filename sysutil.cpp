@@ -1,5 +1,9 @@
 #include "sysutil.h"
+#include <iostream>
+#include <string>
+#include "protobuf/filesync.init.pb.h"
 
+using namespace std;
 namespace sysutil{
 
 
@@ -209,4 +213,45 @@ void fileRecv(int recvSocket,char *filename,int size)
     }
 }
 
+//按照filesync.init.proto定义的格式发送信息给服务端
+void sendFileInfo(int sockfd,char *filename)
+{
+    int fd = open(filename,O_RDONLY);
+    if(-1 == fd)
+        CHEN_LOG(ERROR,"open file error");
+    struct stat sbuf;
+    fstat(fd,&sbuf);
+    int filesize = sbuf.st_size; //  文件大小
+    filesync::init msg;
+    msg.set_id(1);
+    msg.set_size(filesize);
+    msg.set_filename(string(filename));
+    msg.set_md5(string("lskjfda;sldkjf"));
+    string str;
+    int msgsize = msg.ByteSize();
+    char *ch = (char *)&msgsize;
+    str.append(ch,4);
+    cout<<endl;
+    write(sockfd,str.c_str(),str.size());   //先发送这个包的大小
+    msg.SerializeToString(&str);
+    write(sockfd,str.c_str(),str.size());
 }
+
+//接收服务端的同步命令,发送所要上传的文件信息给服务端
+void recvSyncCmd(int sockfd)
+{
+//    char buf[512];
+//    void *data = buf;
+//    int n = recv(sockfd,buf,sizeof(buf),MSG_PEEK);
+//    while(n>4)
+//    {
+//        if(
+//        else
+//        {
+//            int len = *static_cast<const int*>(data);
+
+//        }
+//    }
+}
+}
+

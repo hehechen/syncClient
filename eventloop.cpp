@@ -6,21 +6,27 @@
 #include <dirent.h>
 #include<unordered_map>
 #include "common.h"
+#include "socket.h"
+#include "protobuf/filesync.init.pb.h"
 
 using namespace std;
+
+//控制信息到来时的回调函数
+MessageCallback EventLoop::onControlMessage = [] (int socketfd,muduo::net::Buffer *inputBuffer){
+cout<<endl;
+};
+
+MessageCallback EventLoop::onFileMessage = [] (int socketfd,muduo::net::Buffer*){
+    cout<<endl;
+};
+
 EventLoop::EventLoop(char *root)
 {
-    watch_init(MASK,root);
     epoll_fd = epoll_create(1);
     if(epoll_fd < 0)
         CHEN_LOG(ERROR,"epoll create error");
-    struct epoll_event ev;
-    memset(&ev,0,sizeof(ev));
-    ev.events = EPOLLIN;
-    ev.data.fd = fd;
-    int ctl = epoll_ctl(epoll_fd,EPOLL_CTL_ADD,fd,&ev);     //监控inotify
-    if(ctl<0)
-        CHEN_LOG(ERROR,"epoll ctl error");
+    watch_init(MASK,root);
+    initSocketEpoll();
 }
 
 EventLoop::~EventLoop()
@@ -42,6 +48,28 @@ void EventLoop::loop_once()
         }
     }
 }
+/**
+ * @brief EventLoop::initSocketEpoll    初始化监听socket，并指定相关的回调函数
+ */
+void EventLoop::initSocketEpoll()
+{
+    //创建三个socket并监听
+    TcpSocket socket;
+    for(int i=0;i<3;i++)
+    {
+        sockfd[i] = socket.connect(string("127.0.0.1"),8888);
+        if(sockfd[i] < 0)
+            CHEN_LOG(ERROR,"connect error");
+        struct epoll_event ev;
+        memset(&ev,0,sizeof(ev));
+        ev.events = EPOLLIN;
+        ev.data.fd =  sockfd[i];
+        int ctl = epoll_ctl(epoll_fd,EPOLL_CTL_ADD, sockfd[i],&ev);     //监控inotify
+        if(ctl<0)
+            CHEN_LOG(ERROR,"epoll ctl error");
+    }
+
+}
 
 void EventLoop::watch_init(int mask, char *root)
 {
@@ -49,6 +77,13 @@ void EventLoop::watch_init(int mask, char *root)
     if(fd < 0)
         CHEN_LOG(ERROR,"inotify init error");
     addWatch(root,fd,mask);
+    struct epoll_event ev;
+    memset(&ev,0,sizeof(ev));
+    ev.events = EPOLLIN;
+    ev.data.fd = fd;
+    int ctl = epoll_ctl(epoll_fd,EPOLL_CTL_ADD,fd,&ev);     //监控inotify
+    if(ctl<0)
+        CHEN_LOG(ERROR,"epoll ctl error");
 }
 
 void EventLoop::addWatch(char *dir, int fd, int mask)

@@ -36,7 +36,7 @@ void *ThreadPool::threadFunc(void *data)
     return (void*)0;
 }
 
-int ThreadPool::AddTask(SyncTask task)
+void ThreadPool::AddTask(SyncTask task)
 {
     MutexLockGuard mutexLock(mutex);
     taskQueue.push(std::move(task));

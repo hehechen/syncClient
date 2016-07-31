@@ -12,7 +12,7 @@ class ThreadPool
 {
 public:
     ThreadPool(int threadNum);
-    int AddTask(SyncTask task);
+    void AddTask(SyncTask task);
     int getTaskSize();
 private:
     static queue<SyncTask> taskQueue;  //同步任务队列

@@ -6,8 +6,11 @@ TARGET = syncClient
 CONFIG += console
 CONFIG -= app_bundle
 
-LIBS +=  -L/usr/lib -lprotobuf -lcrypt -lpthread
-INCLUDEPATH += /usr/local/include
+LIBS +=  -L/usr/lib -lprotobuf -lcrypt -lpthread    \
+         -L/home/chen/Desktop/work/build/release-install/lib -lmuduo_net -lmuduo_base   \
+         -lz
+INCLUDEPATH += /usr/local/include/google/protobuf   \
+                /home/chen/Desktop/work/build/release-install/include
 
 TEMPLATE = app
 
@@ -21,7 +24,8 @@ SOURCES += main.cpp \
     eventloop.cpp \
     test/inotifytest.cpp \
     test/prototest.cpp \
-    protobuf/filesync.init.pb.cc
+    protobuf/filesync.init.pb.cc \
+    codec.cpp
 
 HEADERS += \
     common.h \
@@ -32,5 +36,8 @@ HEADERS += \
     mutexlockguard.h \
     condition.h \
     eventloop.h \
-    protobuf/sync.init.pb.h \
-    protobuf/filesync.init.pb.h
+    protobuf/filesync.init.pb.h \
+    codec.h
+
+DISTFILES += \
+    protobuf/filesync.init.proto

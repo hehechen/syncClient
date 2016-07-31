@@ -15,7 +15,9 @@ namespace sysutil{
 
     void fileSend(int desSocket,char *filename);
     void fileRecv(int recvSocket, char *filename, int size);
-
-
+    //按照filesync.init.proto定义的格式发送信息给服务端
+    void sendFileInof(int sockfd,char *filename);
+    //接收服务端的同步命令，根据id的不同执行不同的操作
+    void recvSyncCmd(int sockfd);
 }
 #endif // SYSUTIL_H
