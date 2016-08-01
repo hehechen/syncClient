@@ -37,8 +37,8 @@ void Codec::parse(int socketfd,muduo::net::Buffer *inputBuffer)
             MessagePtr message = parse_aux(inputBuffer->peek()+kHeaderLen,len);
             if (message)
             {
-                dispatch(socketfd,message);
                 inputBuffer->retrieve(kHeaderLen+len);
+                dispatch(socketfd,message);
             }
             else
             {
@@ -113,7 +113,8 @@ void Codec::dispatch(int socketfd, MessagePtr message)
     {
       it->second->onMessage(socketfd, message);
     }
-    LOG_ERROR<<message->GetTypeName()<<"didn't register callback";
+    else
+        LOG_ERROR<<message->GetTypeName()<<"didn't register callback";
 }
 
 /**

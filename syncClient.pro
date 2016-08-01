@@ -24,8 +24,8 @@ SOURCES += main.cpp \
     eventloop.cpp \
     test/inotifytest.cpp \
     test/prototest.cpp \
-    protobuf/filesync.init.pb.cc \
-    codec.cpp
+    codec.cpp \
+    protobuf/filesync.pb.cc
 
 HEADERS += \
     common.h \
@@ -36,8 +36,8 @@ HEADERS += \
     mutexlockguard.h \
     condition.h \
     eventloop.h \
-    protobuf/filesync.init.pb.h \
-    codec.h
+    codec.h \
+    protobuf/filesync.pb.h
 
 DISTFILES += \
-    protobuf/filesync.init.proto
+    protobuf/filesync.proto

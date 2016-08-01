@@ -1,24 +1,16 @@
-#include "eventloop.h"
 #include<sys/inotify.h>
 #include<sys/epoll.h>
 #include<iostream>
 #include <sys/types.h>
 #include <dirent.h>
 #include<unordered_map>
+
+#include "eventloop.h"
 #include "common.h"
 #include "socket.h"
-#include "protobuf/filesync.init.pb.h"
+#include "sysutil.h"
 
 using namespace std;
-
-//控制信息到来时的回调函数
-MessageCallback EventLoop::onControlMessage = [] (int socketfd,muduo::net::Buffer *inputBuffer){
-cout<<endl;
-};
-
-MessageCallback EventLoop::onFileMessage = [] (int socketfd,muduo::net::Buffer*){
-    cout<<endl;
-};
 
 EventLoop::EventLoop(char *root)
 {
@@ -46,18 +38,45 @@ void EventLoop::loop_once()
                 doAction();
             }
         }
+        else if(evs[i].data.fd == sockfd[0])
+        {//读到buffer里
+            if(controlBuffer.readFd(sockfd[0],NULL) < 0)
+                CHEN_LOG(ERROR,"read to buffer error");
+            onControlMessage(sockfd[0],&controlBuffer);
+        }
+        else
+        {
+            muduo::net::Buffer *inputBuffer = socket_stateMap[evs[i].data.fd]->inputBuffer;
+            if(inputBuffer->readFd(sockfd[0],NULL) < 0)
+                CHEN_LOG(ERROR,"read to buffer error");
+            onFileMessage(evs[i].data.fd,inputBuffer);
+        }
     }
 }
+//接收到控制命令
+void EventLoop::onControlMessage(int socketfd, muduo::net::Buffer *inputBuffer)
+{
+    codec.parse(socketfd,inputBuffer);
+}
+//文件传输通道有数据到来，判断是消息还是文件数据
+void EventLoop::onFileMessage(int socketfd,muduo::net::Buffer *inputBuffer)
+{
+    SocketStatePtr ssptr = socket_stateMap[socketfd];
+    if(ssptr->isRecving)//说明是文件数据
+        recvFile(ssptr,inputBuffer);
+    else
+        codec.parse(socketfd,inputBuffer);
+}
+
 /**
- * @brief EventLoop::initSocketEpoll    初始化监听socket，并指定相关的回调函数
+ * @brief EventLoop::initSocketEpoll    初始化监听socket并注册解码器的回调函数
  */
 void EventLoop::initSocketEpoll()
 {
-    //创建三个socket并监听
-    TcpSocket socket;
+    //连接三个socket并监听
     for(int i=0;i<3;i++)
     {
-        sockfd[i] = socket.connect(string("127.0.0.1"),8888);
+        sockfd[i] = tcpSocket[i].connect(string("127.0.0.1"),8888);
         if(sockfd[i] < 0)
             CHEN_LOG(ERROR,"connect error");
         struct epoll_event ev;
@@ -68,7 +87,86 @@ void EventLoop::initSocketEpoll()
         if(ctl<0)
             CHEN_LOG(ERROR,"epoll ctl error");
     }
+    //初始化文件传输socket的状态
+    for(int i=1;i<3;i++)
+    {
+        SocketStatePtr initptr(new SocketState);
+        initptr->inputBuffer = &fileBuffer[i-1];
+        socket_stateMap.insert(make_pair(sockfd[i],initptr));
+    }
+    codec.registerCallback<filesync::sendfile>(std::bind(&EventLoop::onSendFile,this,
+                                                         std::placeholders::_1,std::placeholders::_2));
+    codec.registerCallback<filesync::fileInfo>(std::bind(&EventLoop::onFileInfo,this,
+                                                         std::placeholders::_1,std::placeholders::_2));
 
+}
+/**
+ * @brief EventLoop::recvFile   从Buffer中接收文件数据
+ * @param ssptr
+ * @param inputBuffer
+ */
+void EventLoop::recvFile(SocketStatePtr &ssptr, muduo::net::Buffer *inputBuffer)
+{
+    int len = inputBuffer->readableBytes();
+    if(len >= ssptr->remainSize)
+    {//文件接受完
+        sysutil::fileRecvfromBuf(ssptr->filename.c_str(),
+                                 inputBuffer->peek(),ssptr->remainSize);
+        ssptr->isRecving = false;
+        ssptr->remainSize = 0;
+        ssptr->totalSize = 0;
+        ssptr->filename.clear();
+    }
+    else
+    {
+        sysutil::fileRecvfromBuf(ssptr->filename.c_str(),
+                                 inputBuffer->peek(),len);
+        ssptr->remainSize -= len;
+    }
+}
+/**
+ * @brief EventLoop::getIdleSocket  获取空闲的文件传输socket
+ * @return  找不到就返回-1
+ */
+int EventLoop::getIdleSocket()
+{
+    for(int i=1;i<3;i++)
+    {
+        if(socket_stateMap[sockfd[i]]->isIdle)
+            return sockfd[i];
+    }
+    return -1;
+}
+//接收到sendfile消息,选择一个空闲的socket传输文件
+void EventLoop::onSendFile(int socketfd, sendfilePtr message)
+{
+    string filename = message->filename();
+    int send_sockfd = getIdleSocket();
+    int fd = open(filename.c_str(),O_RDONLY);
+    if(-1 == fd)
+    {
+        CHEN_LOG(WARN,"open file %s error",filename.c_str());
+    }
+    struct stat sbuf;
+    fstat(fd,&sbuf);
+    int filesize = sbuf.st_size;
+    //先发送fileInfo信息
+    filesync::fileInfo msg;
+    msg.set_size(filesize);
+    msg.set_filename(filename);
+    string send_msg = codec.enCode(msg);
+    sysutil::writen(send_sockfd,send_msg.c_str(),send_msg.size());
+    //发送文件
+    sysutil::fileSend(send_sockfd,filename.c_str());
+}
+//接收到fileInfo消息，设置socket_stateMap，注意此时消息已从Buffer中清除
+void EventLoop::onFileInfo(int socketfd, fileInfoPtr message)
+{
+    SocketStatePtr ssptr = socket_stateMap[socketfd];
+    ssptr->isRecving = true;
+    ssptr->filename = std::move(message->filename());
+    ssptr->totalSize = ssptr->remainSize = message->size();
+    recvFile(ssptr,ssptr->inputBuffer);
 }
 
 void EventLoop::watch_init(int mask, char *root)
@@ -156,7 +254,7 @@ void EventLoop::doAction()
                     handle_create(event->name,true);
                 }
                 else
-                   handle_create(event->name,false);
+                    handle_create(event->name,false);
             }
             if(event->mask & IN_DELETE)
             {
@@ -192,12 +290,28 @@ void EventLoop::handle_create(char *filename,bool isDir)
     if(isDir)
         CHEN_LOG(DEBUG,"thie directory %s was created\n",filename);
     else
+    {//发送syncInfo信息给服务端
+        filesync::syncInfo msg;
+        msg.set_id(1);
+        msg.set_filename(string(filename));
+        string send = codec.enCode(msg);
+        sysutil::writen(sockfd[0],send.c_str(),send.size());
         CHEN_LOG(DEBUG,"thie file %s was created\n",filename);
+    }
 }
-
+/**
+ * @brief EventLoop::handle_modify  修改文件内容的同步任务
+ * @param filename
+ */
 void EventLoop::handle_modify(char *filename)
 {
-   CHEN_LOG(DEBUG,"thie file %s was modified\n",filename);
+    //发送syncInfo信息给服务端
+    filesync::syncInfo msg;
+    msg.set_id(2);
+    msg.set_filename(string(filename));
+    string send = codec.enCode(msg);
+    sysutil::writen(sockfd[0],send.c_str(),send.size());
+    CHEN_LOG(DEBUG,"thie file %s was modified\n",filename);
 }
 
 void EventLoop::handle_rename(const char *oldname,const char *newname)

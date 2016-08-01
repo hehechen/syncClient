@@ -1,7 +1,6 @@
 #include "sysutil.h"
 #include <iostream>
 #include <string>
-#include "protobuf/filesync.init.pb.h"
 
 using namespace std;
 namespace sysutil{
@@ -141,11 +140,11 @@ ssize_t writen(int fd, const void *buf, size_t count)
     return count;
 }
 /**
- * @brief filetranse   先发送文件大小(int类型)，然后发送文件
+ * @brief filetranse   然后发送文件
  * @param desSocket    与对方连接的socket
  * @param filename     文件相对路径+文件名
  */
-void fileSend(int desSocket,char *filename)
+void fileSend(int desSocket,const char *filename)
 {
     int fd = open(filename,O_RDONLY);
     if(-1 == fd)
@@ -159,7 +158,7 @@ void fileSend(int desSocket,char *filename)
     }
     int bytes_to_send = sbuf.st_size; //  文件大小
     CHEN_LOG(DEBUG,"file size:%d\n",bytes_to_send);
-    writen(desSocket,&bytes_to_send,sizeof(bytes_to_send)); //先发送文件大小
+ //   writen(desSocket,&bytes_to_send,sizeof(bytes_to_send)); //先发送文件大小
     //开始传输
     while(bytes_to_send)
     {
@@ -212,30 +211,43 @@ void fileRecv(int recvSocket,char *filename,int size)
             size -= ret;
     }
 }
+//从应用层缓冲区读取文件数据，append到文件后面
+void fileRecvfromBuf(const char *filename,const char *buf,int size)
+{
+    int fd = open(filename, O_CREAT | O_WRONLY, 0666);
+    if (fd == -1)
+    {
+        CHEN_LOG(ERROR,"Could not create file.");
+        return;
+    }
+    lseek(fd,0,SEEK_END);
+    if(write(fd,buf,size) < 0)
+        CHEN_LOG(ERROR,"write file error");
+}
 
 //按照filesync.init.proto定义的格式发送信息给服务端
-void sendFileInfo(int sockfd,char *filename)
-{
-    int fd = open(filename,O_RDONLY);
-    if(-1 == fd)
-        CHEN_LOG(ERROR,"open file error");
-    struct stat sbuf;
-    fstat(fd,&sbuf);
-    int filesize = sbuf.st_size; //  文件大小
-    filesync::init msg;
-    msg.set_id(1);
-    msg.set_size(filesize);
-    msg.set_filename(string(filename));
-    msg.set_md5(string("lskjfda;sldkjf"));
-    string str;
-    int msgsize = msg.ByteSize();
-    char *ch = (char *)&msgsize;
-    str.append(ch,4);
-    cout<<endl;
-    write(sockfd,str.c_str(),str.size());   //先发送这个包的大小
-    msg.SerializeToString(&str);
-    write(sockfd,str.c_str(),str.size());
-}
+//void sendFileInfo(int sockfd,char *filename)
+//{
+//    int fd = open(filename,O_RDONLY);
+//    if(-1 == fd)
+//        CHEN_LOG(ERROR,"open file error");
+//    struct stat sbuf;
+//    fstat(fd,&sbuf);
+//    int filesize = sbuf.st_size; //  文件大小
+//    filesync::init msg;
+//    msg.set_id(1);
+//    msg.set_size(filesize);
+//    msg.set_filename(string(filename));
+//    msg.set_md5(string("lskjfda;sldkjf"));
+//    string str;
+//    int msgsize = msg.ByteSize();
+//    char *ch = (char *)&msgsize;
+//    str.append(ch,4);
+//    cout<<endl;
+//    write(sockfd,str.c_str(),str.size());   //先发送这个包的大小
+//    msg.SerializeToString(&str);
+//    write(sockfd,str.c_str(),str.size());
+//}
 
 //接收服务端的同步命令,发送所要上传的文件信息给服务端
 void recvSyncCmd(int sockfd)
