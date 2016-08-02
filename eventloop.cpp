@@ -9,10 +9,12 @@
 #include "common.h"
 #include "socket.h"
 #include "sysutil.h"
+#include "mutexlockguard.h"
 
 using namespace std;
 
-EventLoop::EventLoop(char *root)
+EventLoop::EventLoop(char *root, ThreadPool *threadPool):
+    threadPool(threadPool),cond(mutex)
 {
     epoll_fd = epoll_create(1);
     if(epoll_fd < 0)
@@ -38,33 +40,22 @@ void EventLoop::loop_once()
                 doAction();
             }
         }
-        else if(evs[i].data.fd == sockfd[0])
-        {//读到buffer里
-            if(controlBuffer.readFd(sockfd[0],NULL) < 0)
-                CHEN_LOG(ERROR,"read to buffer error");
-            onControlMessage(sockfd[0],&controlBuffer);
-        }
         else
         {
             muduo::net::Buffer *inputBuffer = socket_stateMap[evs[i].data.fd]->inputBuffer;
-            if(inputBuffer->readFd(sockfd[0],NULL) < 0)
+            if(inputBuffer->readFd(evs[i].data.fd,NULL) < 0)
                 CHEN_LOG(ERROR,"read to buffer error");
-            onFileMessage(evs[i].data.fd,inputBuffer);
+            onMessage(evs[i].data.fd,inputBuffer);
         }
     }
 }
-//接收到控制命令
-void EventLoop::onControlMessage(int socketfd, muduo::net::Buffer *inputBuffer)
-{
-    codec.parse(socketfd,inputBuffer);
-}
-//文件传输通道有数据到来，判断是消息还是文件数据
-void EventLoop::onFileMessage(int socketfd,muduo::net::Buffer *inputBuffer)
+//有数据到来，判断是消息还是文件数据
+void EventLoop::onMessage(int socketfd,muduo::net::Buffer *inputBuffer)
 {
     SocketStatePtr ssptr = socket_stateMap[socketfd];
     if(ssptr->isRecving)//说明是文件数据
         recvFile(ssptr,inputBuffer);
-    else
+    else            //不管是控制通道还是数据传输通道都执行此函数
         codec.parse(socketfd,inputBuffer);
 }
 
@@ -88,16 +79,18 @@ void EventLoop::initSocketEpoll()
             CHEN_LOG(ERROR,"epoll ctl error");
     }
     //初始化文件传输socket的状态
-    for(int i=1;i<3;i++)
+    for(int i=0;i<3;i++)
     {
         SocketStatePtr initptr(new SocketState);
-        initptr->inputBuffer = &fileBuffer[i-1];
+        initptr->inputBuffer = &inputBuffer[i];
         socket_stateMap.insert(make_pair(sockfd[i],initptr));
     }
+    codec.registerCallback<filesync::isControl>(std::bind(&EventLoop::onIsControl,this,
+                               std::placeholders::_1,std::placeholders::_2));
     codec.registerCallback<filesync::sendfile>(std::bind(&EventLoop::onSendFile,this,
-                                                         std::placeholders::_1,std::placeholders::_2));
+                               std::placeholders::_1,std::placeholders::_2));
     codec.registerCallback<filesync::fileInfo>(std::bind(&EventLoop::onFileInfo,this,
-                                                         std::placeholders::_1,std::placeholders::_2));
+                               std::placeholders::_1,std::placeholders::_2));
 
 }
 /**
@@ -137,27 +130,33 @@ int EventLoop::getIdleSocket()
     }
     return -1;
 }
+
+void EventLoop::onIsControl(int socketfd, MessagePtr message)
+{
+    CHEN_LOG(DEBUG,"controlfd %d",socketfd);
+    ControlSocket = socketfd;
+}
 //接收到sendfile消息,选择一个空闲的socket传输文件
 void EventLoop::onSendFile(int socketfd, sendfilePtr message)
 {
-    string filename = message->filename();
-    int send_sockfd = getIdleSocket();
-    int fd = open(filename.c_str(),O_RDONLY);
-    if(-1 == fd)
-    {
-        CHEN_LOG(WARN,"open file %s error",filename.c_str());
-    }
-    struct stat sbuf;
-    fstat(fd,&sbuf);
-    int filesize = sbuf.st_size;
-    //先发送fileInfo信息
-    filesync::fileInfo msg;
-    msg.set_size(filesize);
-    msg.set_filename(filename);
-    string send_msg = codec.enCode(msg);
-    sysutil::writen(send_sockfd,send_msg.c_str(),send_msg.size());
-    //发送文件
-    sysutil::fileSend(send_sockfd,filename.c_str());
+    CHEN_LOG(DEBUG,"receive sendfile=========");
+    auto func_send = [this,message](){
+        int send_sockfd;
+        SocketStatePtr ssptr;
+        {//睡眠直到获取空闲socket
+            MutexLockGuard mutexLock(mutex);
+            while((send_sockfd = getIdleSocket()) == -1)
+                cond.wait();
+            ssptr = socket_stateMap[send_sockfd];
+            ssptr->isIdle = false;
+        }
+        string filename = message->filename();
+        sysutil::sendfileWithproto(send_sockfd,filename.c_str());
+        //将socket设为空闲并唤醒其它在等待的线程
+        ssptr->isIdle = true;
+        cond.notify();
+    };
+    threadPool->AddTask(std::move(func_send));
 }
 //接收到fileInfo消息，设置socket_stateMap，注意此时消息已从Buffer中清除
 void EventLoop::onFileInfo(int socketfd, fileInfoPtr message)
@@ -190,6 +189,8 @@ void EventLoop::addWatch(char *dir, int fd, int mask)
     if((odir = opendir(dir)) == NULL)
         CHEN_LOG(ERROR,"open dir %s error",dir);
     int wd = inotify_add_watch(fd,dir,mask);
+    if(wd<0)
+        CHEN_LOG(ERROR,"inotify add error");
     dirmap.insert(make_pair(wd,string(dir)));
     struct dirent *dent;
     while((dent = readdir(odir)) != NULL)
@@ -244,7 +245,22 @@ void EventLoop::doAction()
             }
             if(event->mask & IN_MODIFY)
             {
-                handle_modify(event->name);
+                string filename = std::move(string(event->name));
+                //先判断过去0.2s是否有对相同文件的修改
+                auto it = fileopMap.find(filename);
+                //在0.2s后执行
+                TimerId id = timerHeap.runAfter(200000,
+                            std::bind(&EventLoop::handle_modify,this,filename));
+                //更新fileopMap
+                if(it != fileopMap.end())
+                {//删除之前的定时任务
+                    timerHeap.cancle(it->second);
+                    it->second = id;
+                }
+                else
+                {
+                    fileopMap.insert(make_pair(filename,id));
+                }
             }
             if(event->mask & IN_CREATE)
             {
@@ -295,23 +311,23 @@ void EventLoop::handle_create(char *filename,bool isDir)
         msg.set_id(1);
         msg.set_filename(string(filename));
         string send = codec.enCode(msg);
-        sysutil::writen(sockfd[0],send.c_str(),send.size());
+        sysutil::writen(ControlSocket,send.c_str(),send.size());
         CHEN_LOG(DEBUG,"thie file %s was created\n",filename);
     }
 }
 /**
- * @brief EventLoop::handle_modify  修改文件内容的同步任务
+ * @brief EventLoop::handle_modify  修改文件内容的同步任务，更新fileopMap
  * @param filename
  */
-void EventLoop::handle_modify(char *filename)
+void EventLoop::handle_modify(string filename)
 {
+    CHEN_LOG(DEBUG,"thie file %s was modified\n",filename.c_str());
     //发送syncInfo信息给服务端
     filesync::syncInfo msg;
     msg.set_id(2);
-    msg.set_filename(string(filename));
+    msg.set_filename(filename);
     string send = codec.enCode(msg);
-    sysutil::writen(sockfd[0],send.c_str(),send.size());
-    CHEN_LOG(DEBUG,"thie file %s was modified\n",filename);
+    sysutil::writen(ControlSocket,send.c_str(),send.size());
 }
 
 void EventLoop::handle_rename(const char *oldname,const char *newname)

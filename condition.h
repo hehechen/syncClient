@@ -1,3 +1,5 @@
+#ifndef CONDITION_H
+#define CONDITION_H
 #include "mutexlock.h"
 
 class Condition
@@ -16,3 +18,4 @@ private:
 	pthread_cond_t pcond_;
 
 };
+#endif  //CONDITION_H

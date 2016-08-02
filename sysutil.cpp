@@ -1,4 +1,6 @@
 #include "sysutil.h"
+#include "protobuf/filesync.pb.h"
+#include "codec.h"
 #include <iostream>
 #include <string>
 
@@ -172,6 +174,7 @@ void fileSend(int desSocket,const char *filename)
         }
         bytes_to_send -= ret;//更新剩下的字节数
     }
+    close(fd);
 }
 
 /**
@@ -210,6 +213,7 @@ void fileRecv(int recvSocket,char *filename,int size)
         else if(ret > 0)
             size -= ret;
     }
+    close(fd);
 }
 //从应用层缓冲区读取文件数据，append到文件后面
 void fileRecvfromBuf(const char *filename,const char *buf,int size)
@@ -223,47 +227,46 @@ void fileRecvfromBuf(const char *filename,const char *buf,int size)
     lseek(fd,0,SEEK_END);
     if(write(fd,buf,size) < 0)
         CHEN_LOG(ERROR,"write file error");
+    close(fd);
 }
 
-//按照filesync.init.proto定义的格式发送信息给服务端
-//void sendFileInfo(int sockfd,char *filename)
-//{
-//    int fd = open(filename,O_RDONLY);
-//    if(-1 == fd)
-//        CHEN_LOG(ERROR,"open file error");
-//    struct stat sbuf;
-//    fstat(fd,&sbuf);
-//    int filesize = sbuf.st_size; //  文件大小
-//    filesync::init msg;
-//    msg.set_id(1);
-//    msg.set_size(filesize);
-//    msg.set_filename(string(filename));
-//    msg.set_md5(string("lskjfda;sldkjf"));
-//    string str;
-//    int msgsize = msg.ByteSize();
-//    char *ch = (char *)&msgsize;
-//    str.append(ch,4);
-//    cout<<endl;
-//    write(sockfd,str.c_str(),str.size());   //先发送这个包的大小
-//    msg.SerializeToString(&str);
-//    write(sockfd,str.c_str(),str.size());
-//}
-
-//接收服务端的同步命令,发送所要上传的文件信息给服务端
-void recvSyncCmd(int sockfd)
+//先发送fileInfo信息再发送文件内容
+void sendfileWithproto(int sockfd,const char *filename)
 {
-//    char buf[512];
-//    void *data = buf;
-//    int n = recv(sockfd,buf,sizeof(buf),MSG_PEEK);
-//    while(n>4)
-//    {
-//        if(
-//        else
-//        {
-//            int len = *static_cast<const int*>(data);
-
-//        }
-//    }
+    int fd = open(filename,O_RDONLY);
+    if(-1 == fd)
+        CHEN_LOG(ERROR,"open file %s error",filename);
+    struct stat sbuf;
+    int ret = fstat(fd,&sbuf);
+    if (!S_ISREG(sbuf.st_mode))
+    {//不是一个普通文件
+        CHEN_LOG(WARN,"failed to open file");
+        return;
+    }
+    int bytes_to_send = sbuf.st_size; //  文件大小
+    //先发送fileInfo信息
+    filesync::fileInfo msg;
+    msg.set_size(bytes_to_send);
+    msg.set_filename(string(filename));
+    string send_msg = Codec::enCode(msg);
+    if(writen(sockfd,send_msg.c_str(),send_msg.size()) == -1)
+        CHEN_LOG(ERROR,"failed to write socket");
+    CHEN_LOG(DEBUG,"file size:%d=======filename:%s"
+                   "========message size:%d",bytes_to_send,filename,send_msg.size());
+    //开始传输
+    while(bytes_to_send)
+    {
+        int num_this_time = bytes_to_send > 4096 ? 4096:bytes_to_send;
+        ret = sendfile(sockfd,fd,NULL,num_this_time);//不会返回EINTR,ret是发送成功的字节数
+        if (-1 == ret)
+        {
+            //发送失败
+            CHEN_LOG(ERROR,"send file failed");
+            break;
+        }
+        bytes_to_send -= ret;//更新剩下的字节数
+    }
+    close(fd);
 }
 }
 

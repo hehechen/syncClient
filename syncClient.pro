@@ -25,7 +25,10 @@ SOURCES += main.cpp \
     test/inotifytest.cpp \
     test/prototest.cpp \
     codec.cpp \
-    protobuf/filesync.pb.cc
+    protobuf/filesync.pb.cc \
+    TimeStamp.cpp \
+    TimerHeap.cpp \
+    test/timerheaptest.cpp
 
 HEADERS += \
     common.h \
@@ -37,7 +40,9 @@ HEADERS += \
     condition.h \
     eventloop.h \
     codec.h \
-    protobuf/filesync.pb.h
+    protobuf/filesync.pb.h \
+    TimeStamp.h \
+    TimerHeap.h
 
 DISTFILES += \
     protobuf/filesync.proto

@@ -30,7 +30,7 @@ void *ThreadPool::threadFunc(void *data)
             SyncTask task = std::move(taskQueue.front());
             task(); /** 执行任务 */
             taskQueue.pop();
-            CHEN_LOG(DEBUG,"tid:%lu idle/n", tid);
+            CHEN_LOG(DEBUG,"tid:%lu idle", tid);
         }
     }
     return (void*)0;
@@ -40,6 +40,7 @@ void ThreadPool::AddTask(SyncTask task)
 {
     MutexLockGuard mutexLock(mutex);
     taskQueue.push(std::move(task));
+    cond.notify();
 }
 
 int ThreadPool::getTaskSize()
