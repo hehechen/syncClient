@@ -35,6 +35,11 @@ inline bool operator==(TimeStamp lts,TimeStamp rts)
 	return lts.getMicrosecondsSinceEpoch() == rts.getMicrosecondsSinceEpoch();
 }
 
+inline bool operator!=(TimeStamp lts,TimeStamp rts)
+{
+    return lts.getMicrosecondsSinceEpoch() != rts.getMicrosecondsSinceEpoch();
+}
+
 
 inline double timeDifference(TimeStamp high, TimeStamp low)
 {

@@ -111,7 +111,7 @@ void *TimerHeap::loop_timer()
 			//epoll时加入定时器使用timerfd_settime系统调用会使timerFD变成可读		
 			num_events = epoll_wait(epoll_fd, &event, 5, 10);	//10毫秒查一次
 			if(num_events > 0)
-			{
+            {
 				handle_read();
 				num_events = 0;
 			}		
@@ -136,23 +136,29 @@ TimerId TimerHeap::addTimer(TimeStamp when,TimerCallback cb)
 {
 	MutexLockGuard mutexLock(mutex);
     timers.push_back(Entry(when,cb));
-    int index = push_heap(timers.begin(),timers.end(),EntryComp());
+    push_heap(timers.begin(),timers.end(),EntryComp());
 	resetTimerfd(timerFD,timers.begin()->first);
     //设置timerID
     ++timerseq_;
-//    CHEN_LOG(DEBUG,"id:%ld",timerseq_);
+ //   CHEN_LOG(DEBUG,"hepsize:%d,id:%ld",timers.size(),timerseq_);
     return make_pair(timerseq_,when);
 }
 
 void TimerHeap::cancle(TimerId timerId)
 {
-	MutexLockGuard mutexLock(mutex);
-    Entry emptyEntry = {    timerId.second,[](){}   };
-    auto it = lower_bound(timers.begin(),timers.end(),emptyEntry,VecComp());
-    int pos = it-timers.begin();
-    std::swap(timers[pos],timers[timers.size()-1]);
-	timers.pop_back();
-    adjust_heap(timers.begin(),timers.end(),pos,timers.size(),EntryComp());
+    MutexLockGuard mutexLock(mutex);
+    for(auto it=timers.begin();it!=timers.end();++it)
+    {
+        if(it->first == timerId.second)
+        {
+            int pos = it-timers.begin();
+            std::swap(timers[pos],timers[timers.size()-1]);
+            timers.pop_back();
+            adjust_heap(timers.begin(),timers.end(),pos,timers.size(),EntryComp());
+            resetTimerfd(timerFD,timers.begin()->first);
+            CHEN_LOG(DEBUG,"CANCLE TIMER %ld",it->first.getMicrosecondsSinceEpoch());
+        }
+    }
 }
 
 void TimerHeap::handle_read()

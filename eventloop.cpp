@@ -241,7 +241,7 @@ void EventLoop::doAction()
                 //先判断过去0.2s是否有对相同文件的修改
                 auto it = fileopMap.find(filename);
                 //在0.2s后执行
-                TimerId id = timerHeap.runAfter(200000,
+                TimerId id = timerHeap.runAfter(500000,
                                 std::bind(&EventLoop::handle_modify,this,filename));
                 //更新fileopMap
                 if(it != fileopMap.end())
