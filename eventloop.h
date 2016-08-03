@@ -27,16 +27,16 @@ struct SocketState
     muduo::net::Buffer *inputBuffer = NULL;    //应用层的输入缓冲区
     int totalSize = 0;
     int remainSize = 0;
-    string filename;
+    string filename;        //本地文件路径包括文件名
 };
 
 typedef shared_ptr<SocketState> SocketStatePtr ;
 //socket接收到信息的回调函数
 typedef function<void(int,muduo::net::Buffer*)> MessageCallback;
 //相应protobuf消息的回调函数
-typedef shared_ptr<filesync::syncInfo> syncInfoPtr;
-typedef shared_ptr<filesync::sendfile> sendfilePtr;
-typedef shared_ptr<filesync::fileInfo> fileInfoPtr;
+typedef shared_ptr<filesync::SyncInfo> syncInfoPtr;
+typedef shared_ptr<filesync::SendFile> sendfilePtr;
+typedef shared_ptr<filesync::FileInfo> fileInfoPtr;
 
 //用来监听inotify事件和【接收服务端同步命令的socket】
 class EventLoop
@@ -46,7 +46,8 @@ public:
     ~EventLoop();
     void loop_once();
 private:
-    ThreadPool *threadPool;    
+    string rootDir;    //要同步的文件夹
+    ThreadPool *threadPool;
     MutexLock mutex;    //互斥锁
     Condition cond;     //条件变量
     muduo::net::Buffer inputBuffer[3];
@@ -90,14 +91,13 @@ private:
     static const int BUF_LEN = 1024 * ( EVENT_SIZE + 16 );
 
     void watch_init(int mask,char *root);   //初始化监听目录
-    void addWatch(char *dir, int fd, int mask);       //递归添加监听目录
-    void append_dir(int fd, struct inotify_event *event, int mask);//添加监听文件夹
+    void addWatch(const char *dir, int fd, int mask);       //递归添加监听目录
     char buffer[BUF_LEN];
     void doAction();            //根据inotify的事件采取行动
-    void handle_create(char *filename,bool isDir);
+    void handle_create(string filename, bool isDir);
     void handle_modify(string filename);
-    void handle_rename(const char *oldname,const char *newname);
-    void handle_delete(char *filename,bool isDir);
+    void handle_rename(string oldname, string newname);
+    void handle_delete(string filename, bool isDir);
 };
 
 

@@ -160,7 +160,7 @@ void fileSend(int desSocket,const char *filename)
     }
     int bytes_to_send = sbuf.st_size; //  文件大小
     CHEN_LOG(DEBUG,"file size:%d\n",bytes_to_send);
- //   writen(desSocket,&bytes_to_send,sizeof(bytes_to_send)); //先发送文件大小
+    //   writen(desSocket,&bytes_to_send,sizeof(bytes_to_send)); //先发送文件大小
     //开始传输
     while(bytes_to_send)
     {
@@ -230,12 +230,17 @@ void fileRecvfromBuf(const char *filename,const char *buf,int size)
     close(fd);
 }
 
-//先发送fileInfo信息再发送文件内容
-void sendfileWithproto(int sockfd,const char *filename)
+/**
+ * @brief sendfileWithproto 先发送fileInfo信息再发送文件内容
+ * @param sockfd
+ * @param localname 本地路径
+ * @param remotename    不包含顶层文件夹的文件名
+ */
+void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
 {
-    int fd = open(filename,O_RDONLY);
+    int fd = open(localname,O_RDONLY);
     if(-1 == fd)
-        CHEN_LOG(ERROR,"open file %s error",filename);
+        CHEN_LOG(ERROR,"open file %s error",localname);
     struct stat sbuf;
     int ret = fstat(fd,&sbuf);
     if (!S_ISREG(sbuf.st_mode))
@@ -245,14 +250,14 @@ void sendfileWithproto(int sockfd,const char *filename)
     }
     int bytes_to_send = sbuf.st_size; //  文件大小
     //先发送fileInfo信息
-    filesync::fileInfo msg;
+    filesync::FileInfo msg;
     msg.set_size(bytes_to_send);
-    msg.set_filename(string(filename));
+    msg.set_filename(string(remotename));
     string send_msg = Codec::enCode(msg);
     if(writen(sockfd,send_msg.c_str(),send_msg.size()) == -1)
         CHEN_LOG(ERROR,"failed to write socket");
-    CHEN_LOG(DEBUG,"file size:%d=======filename:%s"
-                   "========message size:%d",bytes_to_send,filename,send_msg.size());
+    //    CHEN_LOG(DEBUG,"file size:%d=======filename:%s"
+    //                   "========message size:%d",bytes_to_send,filename,send_msg.size());
     //开始传输
     while(bytes_to_send)
     {
@@ -267,6 +272,55 @@ void sendfileWithproto(int sockfd,const char *filename)
         bytes_to_send -= ret;//更新剩下的字节数
     }
     close(fd);
+}
+/**
+ * @brief send_SyncInfo  发送SyncInfo信息
+ * @param socketfd
+ * @param id
+ * @param filename
+ * @param newname       新文件名，发送重命名信息时才用
+ */
+void send_SyncInfo(int socketfd,int id,string filename,string newname)
+{
+    filesync::SyncInfo msg;
+    msg.set_id(id);
+    msg.set_filename(filename);
+    if(4 == id) //重命名
+        msg.set_newfilename(newname);
+    string send = Codec::enCode(msg);
+    sysutil::writen(socketfd,send.c_str(),send.size());
+}
+
+/**
+ * @brief sync_Dir  同步整个文件夹(不包括文件夹本身)
+ * @param socketfd  控制通道的socket
+ * @param root  同步的顶层文件夹，发送消息时要去掉
+ * @param dir  要同步的文件夹，路径后面要有/
+ * @return
+ */
+void sync_Dir(int socketfd,string root,string dir)
+{
+    DIR *odir = NULL;
+    if((odir = opendir(dir.c_str())) == NULL)
+        CHEN_LOG(ERROR,"open dir %s error",dir.c_str());
+    struct dirent *dent;
+    while((dent = readdir(odir)) != NULL)
+    {
+        if (dent->d_name[0] == '.') //隐藏文件跳过
+            continue;
+        string subdir = string(dir) + dent->d_name;
+        string remote_subdir = subdir.substr(root.size());
+        if(dent->d_type == DT_DIR)
+        {//文件夹
+            send_SyncInfo(socketfd,0,remote_subdir);
+            sync_Dir(socketfd,root,(subdir + "/").c_str());
+        }
+        else
+        {
+            send_SyncInfo(socketfd,1,remote_subdir);
+        }
+
+    }
 }
 }
 

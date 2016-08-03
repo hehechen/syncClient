@@ -4,7 +4,7 @@
 int main()
 {
     ThreadPool threadPool(3);
-    EventLoop loop("/home/chen/build-syncClient-Desktop_Qt_5_6_1_GCC_64bit-Debug/",&threadPool);
+    EventLoop loop("/home/chen/Desktop/client/",&threadPool);   //最后要有/
     while(1)
     {
         loop.loop_once();

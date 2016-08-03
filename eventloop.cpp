@@ -14,7 +14,7 @@
 using namespace std;
 
 EventLoop::EventLoop(char *root, ThreadPool *threadPool):
-    threadPool(threadPool),cond(mutex)
+    rootDir(root),threadPool(threadPool),cond(mutex)
 {
     epoll_fd = epoll_create(1);
     if(epoll_fd < 0)
@@ -85,12 +85,12 @@ void EventLoop::initSocketEpoll()
         initptr->inputBuffer = &inputBuffer[i];
         socket_stateMap.insert(make_pair(sockfd[i],initptr));
     }
-    codec.registerCallback<filesync::isControl>(std::bind(&EventLoop::onIsControl,this,
-                               std::placeholders::_1,std::placeholders::_2));
-    codec.registerCallback<filesync::sendfile>(std::bind(&EventLoop::onSendFile,this,
-                               std::placeholders::_1,std::placeholders::_2));
-    codec.registerCallback<filesync::fileInfo>(std::bind(&EventLoop::onFileInfo,this,
-                               std::placeholders::_1,std::placeholders::_2));
+    codec.registerCallback<filesync::IsControl>(std::bind(&EventLoop::onIsControl,this,
+                                                          std::placeholders::_1,std::placeholders::_2));
+    codec.registerCallback<filesync::SendFile>(std::bind(&EventLoop::onSendFile,this,
+                                                         std::placeholders::_1,std::placeholders::_2));
+    codec.registerCallback<filesync::FileInfo>(std::bind(&EventLoop::onFileInfo,this,
+                                                         std::placeholders::_1,std::placeholders::_2));
 
 }
 /**
@@ -123,7 +123,7 @@ void EventLoop::recvFile(SocketStatePtr &ssptr, muduo::net::Buffer *inputBuffer)
  */
 int EventLoop::getIdleSocket()
 {
-    for(int i=1;i<3;i++)
+    for(int i=0;i<3;i++)
     {
         if(socket_stateMap[sockfd[i]]->isIdle)
             return sockfd[i];
@@ -135,6 +135,7 @@ void EventLoop::onIsControl(int socketfd, MessagePtr message)
 {
     CHEN_LOG(DEBUG,"controlfd %d",socketfd);
     ControlSocket = socketfd;
+    socket_stateMap[socketfd]->isIdle = false;  //将控制通道socket设置为不可发送文件
 }
 //接收到sendfile消息,选择一个空闲的socket传输文件
 void EventLoop::onSendFile(int socketfd, sendfilePtr message)
@@ -150,8 +151,9 @@ void EventLoop::onSendFile(int socketfd, sendfilePtr message)
             ssptr = socket_stateMap[send_sockfd];
             ssptr->isIdle = false;
         }
-        string filename = message->filename();
-        sysutil::sendfileWithproto(send_sockfd,filename.c_str());
+        string localname = rootDir+message->filename();
+        string remotename = message->filename();
+        sysutil::sendfileWithproto(send_sockfd,localname.c_str(),remotename.c_str());
         //将socket设为空闲并唤醒其它在等待的线程
         ssptr->isIdle = true;
         cond.notify();
@@ -163,7 +165,7 @@ void EventLoop::onFileInfo(int socketfd, fileInfoPtr message)
 {
     SocketStatePtr ssptr = socket_stateMap[socketfd];
     ssptr->isRecving = true;
-    ssptr->filename = std::move(message->filename());
+    ssptr->filename = std::move(rootDir+message->filename());
     ssptr->totalSize = ssptr->remainSize = message->size();
     recvFile(ssptr,ssptr->inputBuffer);
 }
@@ -183,14 +185,15 @@ void EventLoop::watch_init(int mask, char *root)
         CHEN_LOG(ERROR,"epoll ctl error");
 }
 
-void EventLoop::addWatch(char *dir, int fd, int mask)
+void EventLoop::addWatch(const char *dir, int fd, int mask)
 {
     DIR *odir = NULL;
     if((odir = opendir(dir)) == NULL)
         CHEN_LOG(ERROR,"open dir %s error",dir);
     int wd = inotify_add_watch(fd,dir,mask);
-    if(wd<0)
-        CHEN_LOG(ERROR,"inotify add error");
+    if(wd < 0)
+        CHEN_LOG(ERROR,"inotify add %s error",dir);
+    CHEN_LOG(DEBUG,"wd: %d,inotify add %s",wd,dir);
     dirmap.insert(make_pair(wd,string(dir)));
     struct dirent *dent;
     while((dent = readdir(odir)) != NULL)
@@ -200,24 +203,10 @@ void EventLoop::addWatch(char *dir, int fd, int mask)
         if(dent->d_type == DT_DIR)
         {
             char subdir[512];
-            sprintf(subdir,"%s/%s",dir,dent->d_name);
+            sprintf(subdir,"%s%s/",dir,dent->d_name);
             addWatch(subdir,fd,mask);
         }
     }
-}
-/**
- * @brief EventLoop::append_dir //添加监听文件夹
- * @param fd                //inotify的fd
- * @param event
- * @param mask
- */
-void EventLoop::append_dir(int fd,struct inotify_event *event,int mask)
-{
-    char ndir[512];
-    int wd;
-    sprintf(ndir,"%s/%s",dirmap.find(event->wd)->second.c_str(),event->name);
-    wd = inotify_add_watch(fd,ndir,mask);
-    dirmap.insert(make_pair(wd,string(ndir)));
 }
 
 void EventLoop::doAction()
@@ -235,22 +224,25 @@ void EventLoop::doAction()
             }
             if(event->mask & IN_MOVED_TO)//重命名
             {
+                string parDir = dirmap[event->wd];
                 auto it = cookieMap.find(event->cookie);
                 if(it!=cookieMap.end())
                 {
-                    handle_rename(it->second.c_str(),event->name);
+                    handle_rename(parDir + it->second.c_str(),
+                                  parDir + event->name);
                 }
                 else
                     CHEN_LOG(ERROR,"can't find rename cookie");
             }
             if(event->mask & IN_MODIFY)
             {
-                string filename = std::move(string(event->name));
+                string parDir = dirmap[event->wd];
+                string filename = std::move(parDir + string(event->name));
                 //先判断过去0.2s是否有对相同文件的修改
                 auto it = fileopMap.find(filename);
                 //在0.2s后执行
                 TimerId id = timerHeap.runAfter(200000,
-                            std::bind(&EventLoop::handle_modify,this,filename));
+                                std::bind(&EventLoop::handle_modify,this,filename));
                 //更新fileopMap
                 if(it != fileopMap.end())
                 {//删除之前的定时任务
@@ -264,22 +256,26 @@ void EventLoop::doAction()
             }
             if(event->mask & IN_CREATE)
             {
+                string parDir = dirmap[event->wd];
+                string filename = parDir + string(event->name);
                 if(event->mask & IN_ISDIR)
                 {//这是一个文件夹
-                    append_dir(fd,event,MASK);
-                    handle_create(event->name,true);
+                    addWatch((filename+"/").c_str(),fd,MASK);
+                    handle_create((filename+"/"),true);
                 }
                 else
-                    handle_create(event->name,false);
+                    handle_create(filename,false);
             }
             if(event->mask & IN_DELETE)
             {
+                string parDir = dirmap[event->wd];
+                string filename = parDir + string(event->name);
                 if(event->mask & IN_ISDIR)
                 {
-                    handle_delete(event->name,true);
+                    handle_delete(filename,true);
                 }
                 else
-                    handle_delete(event->name,false);
+                    handle_delete(filename,false);
             }
         }
         else if(event->mask & IN_DELETE_SELF)
@@ -290,6 +286,7 @@ void EventLoop::doAction()
             if(it!=dirmap.end())
             {
                 dirmap.erase(it);
+                CHEN_LOG(DEBUG,"rm inotify dir");
             }
         }
         i += EVENT_SIZE + event->len;
@@ -301,18 +298,19 @@ void EventLoop::doAction()
  * @param filename
  * @param isDir 是否是文件夹
  */
-void EventLoop::handle_create(char *filename,bool isDir)
-{
+void EventLoop::handle_create(string filename,bool isDir)
+{//发送syncInfo信息给服务端
+    string remotename = filename.substr(rootDir.size());
     if(isDir)
-        CHEN_LOG(DEBUG,"thie directory %s was created\n",filename);
+    {
+        sysutil::send_SyncInfo(ControlSocket,0,remotename);    //发送创建文件夹的信息
+        sysutil::sync_Dir(ControlSocket,rootDir.c_str(),filename.c_str());
+        CHEN_LOG(DEBUG,"thie directory %s was created\n",filename.c_str());
+    }
     else
-    {//发送syncInfo信息给服务端
-        filesync::syncInfo msg;
-        msg.set_id(1);
-        msg.set_filename(string(filename));
-        string send = codec.enCode(msg);
-        sysutil::writen(ControlSocket,send.c_str(),send.size());
-        CHEN_LOG(DEBUG,"thie file %s was created\n",filename);
+    {
+        sysutil::send_SyncInfo(ControlSocket,1,remotename);
+        CHEN_LOG(DEBUG,"thie file %s was created\n",filename.c_str());
     }
 }
 /**
@@ -321,24 +319,29 @@ void EventLoop::handle_create(char *filename,bool isDir)
  */
 void EventLoop::handle_modify(string filename)
 {
+    string remotename = filename.substr(rootDir.size());
     CHEN_LOG(DEBUG,"thie file %s was modified\n",filename.c_str());
-    //发送syncInfo信息给服务端
-    filesync::syncInfo msg;
-    msg.set_id(2);
-    msg.set_filename(filename);
-    string send = codec.enCode(msg);
-    sysutil::writen(ControlSocket,send.c_str(),send.size());
+    //发送SyncInfo信息给服务端
+    sysutil::send_SyncInfo(ControlSocket,2,remotename);
 }
 
-void EventLoop::handle_rename(const char *oldname,const char *newname)
+void EventLoop::handle_rename(string oldname,string newname)
 {
-    CHEN_LOG(DEBUG,"thie file %s was rename to %s\n",oldname,newname);
+    string remoteOldname = oldname.substr(rootDir.size());
+    string remoteNewname = newname.substr(rootDir.size());
+    //发送SyncInfo重命名信息给服务端
+    sysutil::send_SyncInfo(ControlSocket,4,remoteOldname,remoteNewname);
+    CHEN_LOG(DEBUG,"thie file %s was rename to %s\n",oldname.c_str(),newname.c_str());
 }
 
-void EventLoop::handle_delete(char *filename,bool isDir)
+void EventLoop::handle_delete(string filename,bool isDir)
 {
+    string remotename = filename.substr(rootDir.size());
+    //发送SyncInfo信息给服务端
+    sysutil::send_SyncInfo(ControlSocket,3,remotename);
+
     if(isDir)
-        CHEN_LOG(DEBUG,"thie directory %s was deleted\n",filename);
+        CHEN_LOG(DEBUG,"thie directory %s was deleted\n",filename.c_str());
     else
-        CHEN_LOG(DEBUG,"thie file %s was deleted\n",filename);
+        CHEN_LOG(DEBUG,"thie file %s was deleted\n",filename.c_str());
 }
