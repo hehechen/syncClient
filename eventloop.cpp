@@ -93,6 +93,14 @@ void EventLoop::initSocketEpoll()
                                                          std::placeholders::_1,std::placeholders::_2));
 
 }
+
+void EventLoop::init()
+{
+    filesync::Init msg;
+    sysutil::make_Init(ControlSocket,rootDir,rootDir,&msg);
+    string send = Codec::enCode(msg);
+    sysutil::writen(socketfd,send.c_str(),send.size());
+}
 /**
  * @brief EventLoop::recvFile   从Buffer中接收文件数据
  * @param ssptr
@@ -105,6 +113,7 @@ void EventLoop::recvFile(SocketStatePtr &ssptr, muduo::net::Buffer *inputBuffer)
     {//文件接受完
         sysutil::fileRecvfromBuf(ssptr->filename.c_str(),
                                  inputBuffer->peek(),ssptr->remainSize);
+        inputBuffer->retrieve(ssptr->remainSize);
         ssptr->isRecving = false;
         ssptr->remainSize = 0;
         ssptr->totalSize = 0;
@@ -114,6 +123,7 @@ void EventLoop::recvFile(SocketStatePtr &ssptr, muduo::net::Buffer *inputBuffer)
     {
         sysutil::fileRecvfromBuf(ssptr->filename.c_str(),
                                  inputBuffer->peek(),len);
+        inputBuffer->retrieve(len);
         ssptr->remainSize -= len;
     }
 }
@@ -161,12 +171,13 @@ void EventLoop::onSendFile(int socketfd, sendfilePtr message)
     threadPool->AddTask(std::move(func_send));
 }
 //接收到fileInfo消息，设置socket_stateMap，注意此时消息已从Buffer中清除
-void EventLoop::onFileInfo(int socketfd, fileInfoPtr message)
+void EventLoop::onFileInfo(int socketfd, FileInfoPtr message)
 {
     SocketStatePtr ssptr = socket_stateMap[socketfd];
     ssptr->isRecving = true;
     ssptr->filename = std::move(rootDir+message->filename());
     ssptr->totalSize = ssptr->remainSize = message->size();
+    CHEN_LOG(DEBUG,"ready to receive file %s",ssptr->filename.c_str());
     recvFile(ssptr,ssptr->inputBuffer);
 }
 

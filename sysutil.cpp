@@ -1,6 +1,7 @@
 #include "sysutil.h"
 #include "protobuf/filesync.pb.h"
 #include "codec.h"
+#include "md5.h"
 #include <iostream>
 #include <string>
 
@@ -290,6 +291,45 @@ void send_SyncInfo(int socketfd,int id,string filename,string newname)
     string send = Codec::enCode(msg);
     sysutil::writen(socketfd,send.c_str(),send.size());
 }
+/**
+ * @brief send_Init 客户端第一次上线，构建Init信息
+ * @param socketfd
+ * @param root
+ * @param dir
+ * @param msg_init
+ */
+void make_Init(int socketfd,string root,string dir,filesync::Init *msg_init)
+{
+    filesync::SyncInfo *msg_syncInfo;
+    DIR *odir = NULL;
+    if((odir = opendir(dir.c_str())) == NULL)
+        CHEN_LOG(ERROR,"open dir %s error",dir.c_str());
+    struct dirent *dent;
+    while((dent = readdir(odir)) != NULL)
+    {
+        if (dent->d_name[0] == '.') //隐藏文件跳过
+            continue;
+        string subdir = string(dir) + dent->d_name;
+        string remote_subdir = subdir.substr(root.size());
+        msg_syncInfo = msg_init->add_info();
+        if(dent->d_type == DT_DIR)
+        {//文件夹
+            msg_syncInfo->set_id(0);
+            msg_syncInfo->set_filename(remote_subdir);
+
+            send_Init(socketfd,root,(subdir + "/").c_str(),msg_init);
+        }
+        else
+        {
+            ifstream fs(subdir);
+            if(!fs)
+                CHEN_LOG(ERROR,"open fstream error");
+            msg_syncInfo->set_id(1);
+            msg_syncInfo->set_filename(remote_subdir);
+            msg_syncInfo->set_md5(md5::MD5(fs));
+        }
+    }
+}
 
 /**
  * @brief sync_Dir  同步整个文件夹(不包括文件夹本身)
@@ -322,5 +362,6 @@ void sync_Dir(int socketfd,string root,string dir)
 
     }
 }
+
 }
 

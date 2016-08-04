@@ -28,7 +28,8 @@ SOURCES += main.cpp \
     protobuf/filesync.pb.cc \
     TimeStamp.cpp \
     TimerHeap.cpp \
-    test/timerheaptest.cpp
+    test/timerheaptest.cpp \
+    md5.cpp
 
 HEADERS += \
     common.h \
@@ -42,7 +43,8 @@ HEADERS += \
     codec.h \
     protobuf/filesync.pb.h \
     TimeStamp.h \
-    TimerHeap.h
+    TimerHeap.h \
+    md5.h
 
 DISTFILES += \
     protobuf/filesync.proto

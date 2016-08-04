@@ -24,6 +24,7 @@ namespace sysutil{
     //发送syncInfo信息
     void send_SyncInfo(int socketfd, int id, std::string filename,
                                         std::string newname = "");
+    void make_Init(int socketfd,string root,string dir,filesync::Init *msg_init);
     //同步整个文件夹
     void sync_Dir(int socketfd, std::string root, std::string dir);
 }

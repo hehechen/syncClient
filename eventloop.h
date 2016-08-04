@@ -34,9 +34,9 @@ typedef shared_ptr<SocketState> SocketStatePtr ;
 //socket接收到信息的回调函数
 typedef function<void(int,muduo::net::Buffer*)> MessageCallback;
 //相应protobuf消息的回调函数
-typedef shared_ptr<filesync::SyncInfo> syncInfoPtr;
+typedef shared_ptr<filesync::SyncInfo> SyncInfoPtr;
 typedef shared_ptr<filesync::SendFile> sendfilePtr;
-typedef shared_ptr<filesync::FileInfo> fileInfoPtr;
+typedef shared_ptr<filesync::FileInfo> FileInfoPtr;
 
 //用来监听inotify事件和【接收服务端同步命令的socket】
 class EventLoop
@@ -61,12 +61,14 @@ private:
     int ControlSocket = -1; //控制通道socket
     int sockfd[3];  //三个socket
 
+    //初始化监听socket，并指定相关的回调函数
+    void initSocketEpoll();
+    //客户端刚与服务端连接时,发送Init消息给服务端
+    void init();
     //有消息到来时的执行函数
     void onMessage(int socketfd, muduo::net::Buffer *inputBuffer);
     //接收到服务端同步命令的回调函数
     void recvcmdCallback(int socketfd,MessagePtr message);
-    //初始化监听socket，并指定相关的回调函数
-    void initSocketEpoll();
 
     void recvFile(SocketStatePtr &ssptr,muduo::net::Buffer *inputBuffer);
     //获取空闲的文件传输socket
@@ -76,7 +78,7 @@ private:
     void onIsControl(int socketfd,MessagePtr message);
     void onSyncInfo(int socketfd,MessagePtr message);
     void onSendFile(int socketfd,sendfilePtr message);
-    void onFileInfo(int socketfd,fileInfoPtr message);
+    void onFileInfo(int socketfd,FileInfoPtr message);
 
     unordered_map<int,string> cookieMap;    //cookie和原文件名的map
     unordered_map<int,string> dirmap;  //wd和目录的map
