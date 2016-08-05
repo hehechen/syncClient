@@ -13,8 +13,8 @@
 
 using namespace std;
 
-EventLoop::EventLoop(char *root, ThreadPool *threadPool):
-    rootDir(root),threadPool(threadPool),cond(mutex)
+EventLoop::EventLoop(char *root, ThreadPool *threadPool, string ip):
+    rootDir(root),threadPool(threadPool),ip(ip),cond(mutex)
 {
     epoll_fd = epoll_create(1);
     if(epoll_fd < 0)
@@ -67,7 +67,7 @@ void EventLoop::initSocketEpoll()
     //连接三个socket并监听
     for(int i=0;i<3;i++)
     {
-        sockfd[i] = tcpSocket[i].connect(string("127.0.0.1"),8888);
+        sockfd[i] = tcpSocket[i].connect(ip,8888);
         if(sockfd[i] < 0)
             CHEN_LOG(ERROR,"connect error");
         struct epoll_event ev;
@@ -99,7 +99,8 @@ void EventLoop::init()
     filesync::Init msg;
     sysutil::make_Init(ControlSocket,rootDir,rootDir,&msg);
     string send = Codec::enCode(msg);
-    sysutil::writen(socketfd,send.c_str(),send.size());
+    sysutil::writen(ControlSocket,send.c_str(),send.size());
+    CHEN_LOG(DEBUG,"SEND INIT");
 }
 /**
  * @brief EventLoop::recvFile   从Buffer中接收文件数据
@@ -146,6 +147,7 @@ void EventLoop::onIsControl(int socketfd, MessagePtr message)
     CHEN_LOG(DEBUG,"controlfd %d",socketfd);
     ControlSocket = socketfd;
     socket_stateMap[socketfd]->isIdle = false;  //将控制通道socket设置为不可发送文件
+    init();
 }
 //接收到sendfile消息,选择一个空闲的socket传输文件
 void EventLoop::onSendFile(int socketfd, sendfilePtr message)
@@ -311,16 +313,15 @@ void EventLoop::doAction()
  */
 void EventLoop::handle_create(string filename,bool isDir)
 {//发送syncInfo信息给服务端
-    string remotename = filename.substr(rootDir.size());
     if(isDir)
     {
-        sysutil::send_SyncInfo(ControlSocket,0,remotename);    //发送创建文件夹的信息
+        sysutil::send_SyncInfo(ControlSocket,0,rootDir,filename);    //发送创建文件夹的信息
         sysutil::sync_Dir(ControlSocket,rootDir.c_str(),filename.c_str());
         CHEN_LOG(DEBUG,"thie directory %s was created\n",filename.c_str());
     }
     else
     {
-        sysutil::send_SyncInfo(ControlSocket,1,remotename);
+        sysutil::send_SyncInfo(ControlSocket,1,rootDir,filename);
         CHEN_LOG(DEBUG,"thie file %s was created\n",filename.c_str());
     }
 }
@@ -330,26 +331,22 @@ void EventLoop::handle_create(string filename,bool isDir)
  */
 void EventLoop::handle_modify(string filename)
 {
-    string remotename = filename.substr(rootDir.size());
     CHEN_LOG(DEBUG,"thie file %s was modified\n",filename.c_str());
     //发送SyncInfo信息给服务端
-    sysutil::send_SyncInfo(ControlSocket,2,remotename);
+    sysutil::send_SyncInfo(ControlSocket,2,rootDir,filename);
 }
 
 void EventLoop::handle_rename(string oldname,string newname)
 {
-    string remoteOldname = oldname.substr(rootDir.size());
-    string remoteNewname = newname.substr(rootDir.size());
     //发送SyncInfo重命名信息给服务端
-    sysutil::send_SyncInfo(ControlSocket,4,remoteOldname,remoteNewname);
+    sysutil::send_SyncInfo(ControlSocket,4,rootDir,oldname,newname);
     CHEN_LOG(DEBUG,"thie file %s was rename to %s\n",oldname.c_str(),newname.c_str());
 }
 
 void EventLoop::handle_delete(string filename,bool isDir)
 {
-    string remotename = filename.substr(rootDir.size());
     //发送SyncInfo信息给服务端
-    sysutil::send_SyncInfo(ControlSocket,3,remotename);
+    sysutil::send_SyncInfo(ControlSocket,3,rootDir,filename);
 
     if(isDir)
         CHEN_LOG(DEBUG,"thie directory %s was deleted\n",filename.c_str());

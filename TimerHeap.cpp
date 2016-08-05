@@ -140,7 +140,6 @@ TimerId TimerHeap::addTimer(TimeStamp when,TimerCallback cb)
 	resetTimerfd(timerFD,timers.begin()->first);
     //设置timerID
     ++timerseq_;
- //   CHEN_LOG(DEBUG,"hepsize:%d,id:%ld",timers.size(),timerseq_);
     return make_pair(timerseq_,when);
 }
 
@@ -156,7 +155,6 @@ void TimerHeap::cancle(TimerId timerId)
             timers.pop_back();
             adjust_heap(timers.begin(),timers.end(),pos,timers.size(),EntryComp());
             resetTimerfd(timerFD,timers.begin()->first);
-            CHEN_LOG(DEBUG,"CANCLE TIMER %ld",it->first.getMicrosecondsSinceEpoch());
         }
     }
 }

@@ -42,12 +42,13 @@ typedef shared_ptr<filesync::FileInfo> FileInfoPtr;
 class EventLoop
 {
 public:
-    EventLoop(char *root,ThreadPool *threadPool);
+    EventLoop(char *root,ThreadPool *threadPool,string ip = "127.0.0.1");
     ~EventLoop();
     void loop_once();
 private:
     string rootDir;    //要同步的文件夹
     ThreadPool *threadPool;
+    string ip;          //服务端的ip地址
     MutexLock mutex;    //互斥锁
     Condition cond;     //条件变量
     muduo::net::Buffer inputBuffer[3];

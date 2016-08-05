@@ -4,7 +4,12 @@
 #include "common.h"
 #include <iostream>
 #include <string>
-
+#include "protobuf/filesync.pb.h"
+#include <QString>
+#include <QByteArray>
+#include <QCryptographicHash>
+#include <QFile>
+#include <QDebug>
 /*系统工具*/
 namespace sysutil{
     int read_timeout(int fd,unsigned int wait_seconds);
@@ -22,10 +27,12 @@ namespace sysutil{
     //先发送fileInfo信息再发送文件内容
     void sendfileWithproto(int sockfd, const char *localname, const char *remotename);
     //发送syncInfo信息
-    void send_SyncInfo(int socketfd, int id, std::string filename,
+    void send_SyncInfo(int socketfd, int id, std::__cxx11::string rootDir, std::string filename,
                                         std::string newname = "");
-    void make_Init(int socketfd,string root,string dir,filesync::Init *msg_init);
+    void make_Init(int socketfd,std::string root,std::string dir,filesync::Init *msg_init);
     //同步整个文件夹
     void sync_Dir(int socketfd, std::string root, std::string dir);
+    //利用qt库获取md5，支持大文件
+    std::string getFileMd5(std::string filePath);
 }
 #endif // SYSUTIL_H

@@ -281,18 +281,26 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
  * @param filename
  * @param newname       新文件名，发送重命名信息时才用
  */
-void send_SyncInfo(int socketfd,int id,string filename,string newname)
+void send_SyncInfo(int socketfd,int id,string rootDir,string filename,string newname)
 {
     filesync::SyncInfo msg;
+    if(id==1 || id==2)
+    {//创建或修改文件才计算md5
+        msg.set_md5(getFileMd5(filename));
+    }
+    string remoteName = filename.substr(rootDir.size());
+    string remoteNewname;
+    if(!newname.empty())
+        remoteNewname = newname.substr(rootDir.size());
     msg.set_id(id);
-    msg.set_filename(filename);
+    msg.set_filename(remoteName);
     if(4 == id) //重命名
-        msg.set_newfilename(newname);
+        msg.set_newfilename(remoteNewname);
     string send = Codec::enCode(msg);
     sysutil::writen(socketfd,send.c_str(),send.size());
 }
 /**
- * @brief send_Init 客户端第一次上线，构建Init信息
+ * @brief make_Init 客户端第一次上线，构建Init信息
  * @param socketfd
  * @param root
  * @param dir
@@ -317,16 +325,13 @@ void make_Init(int socketfd,string root,string dir,filesync::Init *msg_init)
             msg_syncInfo->set_id(0);
             msg_syncInfo->set_filename(remote_subdir);
 
-            send_Init(socketfd,root,(subdir + "/").c_str(),msg_init);
+            make_Init(socketfd,root,(subdir + "/").c_str(),msg_init);
         }
         else
         {
-            ifstream fs(subdir);
-            if(!fs)
-                CHEN_LOG(ERROR,"open fstream error");
             msg_syncInfo->set_id(1);
             msg_syncInfo->set_filename(remote_subdir);
-            msg_syncInfo->set_md5(md5::MD5(fs));
+            msg_syncInfo->set_md5(getFileMd5(subdir));
         }
     }
 }
@@ -349,18 +354,69 @@ void sync_Dir(int socketfd,string root,string dir)
         if (dent->d_name[0] == '.') //隐藏文件跳过
             continue;
         string subdir = string(dir) + dent->d_name;
-        string remote_subdir = subdir.substr(root.size());
         if(dent->d_type == DT_DIR)
         {//文件夹
-            send_SyncInfo(socketfd,0,remote_subdir);
+            send_SyncInfo(socketfd,0,root,subdir);
             sync_Dir(socketfd,root,(subdir + "/").c_str());
         }
         else
         {
-            send_SyncInfo(socketfd,1,remote_subdir);
+            send_SyncInfo(socketfd,1,root,subdir);
         }
 
     }
+}
+
+/**
+ * @brief getFileMd5    利用qt库获取md5，支持大文件
+ * @param filePath      文件名
+ * @return
+ */
+string getFileMd5(string filePath)
+{
+    QFile localFile(QString::fromStdString(filePath));
+
+    if (!localFile.open(QFile::ReadOnly))
+    {
+        qDebug() << "file open error.";
+        return 0;
+    }
+
+    QCryptographicHash ch(QCryptographicHash::Md5);
+
+    quint64 totalBytes = 0;
+    quint64 bytesWritten = 0;
+    quint64 bytesToWrite = 0;
+    quint64 loadSize = 1024 * 4;
+    QByteArray buf;
+
+    totalBytes = localFile.size();
+    bytesToWrite = totalBytes;
+
+    while (1)
+    {
+        if(bytesToWrite > 0)
+        {
+            buf = localFile.read(qMin(bytesToWrite, loadSize));
+            ch.addData(buf);
+            bytesWritten += buf.length();
+            bytesToWrite -= buf.length();
+            buf.resize(0);
+        }
+        else
+        {
+            break;
+        }
+
+        if(bytesWritten == totalBytes)
+        {
+            break;
+        }
+    }
+
+    localFile.close();
+    QString md5 = ch.result().toHex();
+    return md5.toStdString();
 }
 
 }
