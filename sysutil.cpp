@@ -1,7 +1,6 @@
 #include "sysutil.h"
 #include "protobuf/filesync.pb.h"
 #include "codec.h"
-#include "md5.h"
 #include <iostream>
 #include <string>
 
@@ -241,7 +240,7 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
 {
     int fd = open(localname,O_RDONLY);
     if(-1 == fd)
-        CHEN_LOG(ERROR,"open file %s error",localname);
+        CHEN_LOG(WARN,"open file %s error",localname);
     struct stat sbuf;
     int ret = fstat(fd,&sbuf);
     if (!S_ISREG(sbuf.st_mode))
@@ -257,8 +256,8 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
     string send_msg = Codec::enCode(msg);
     if(writen(sockfd,send_msg.c_str(),send_msg.size()) == -1)
         CHEN_LOG(ERROR,"failed to write socket");
-    //    CHEN_LOG(DEBUG,"file size:%d=======filename:%s"
-    //                   "========message size:%d",bytes_to_send,filename,send_msg.size());
+    CHEN_LOG(DEBUG,"file size:%d=======filename:%s"
+                   "========message size:%d",bytes_to_send,localname,send_msg.size());
     //开始传输
     while(bytes_to_send)
     {
@@ -267,11 +266,12 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
         if (-1 == ret)
         {
             //发送失败
-            CHEN_LOG(ERROR,"send file failed");
+            CHEN_LOG(WARN,"send file failed");
             break;
         }
         bytes_to_send -= ret;//更新剩下的字节数
     }
+    CHEN_LOG(DEBUG,"sendfile%s  COMPLETED",localname);
     close(fd);
 }
 /**
@@ -379,7 +379,7 @@ string getFileMd5(string filePath)
     if (!localFile.open(QFile::ReadOnly))
     {
         qDebug() << "file open error.";
-        return 0;
+        return "";
     }
 
     QCryptographicHash ch(QCryptographicHash::Md5);

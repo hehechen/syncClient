@@ -10,6 +10,7 @@
 #include <muduo/net/Buffer.h>
 #include <muduo/base/Timestamp.h>
 
+#include "parseconfig.h"
 #include "socket.h"
 #include "protobuf/filesync.pb.h"
 #include "codec.h"
@@ -19,7 +20,7 @@
 
 using namespace std;
 
-//文件传输socket的结构体
+//文件传输socket的状态
 struct SocketState
 {
     bool isIdle = true;    //是否可发送
@@ -35,22 +36,23 @@ typedef shared_ptr<SocketState> SocketStatePtr ;
 typedef function<void(int,muduo::net::Buffer*)> MessageCallback;
 //相应protobuf消息的回调函数
 typedef shared_ptr<filesync::SyncInfo> SyncInfoPtr;
-typedef shared_ptr<filesync::SendFile> sendfilePtr;
+typedef shared_ptr<filesync::SendFile> SendFilePtr;
 typedef shared_ptr<filesync::FileInfo> FileInfoPtr;
 
 //用来监听inotify事件和【接收服务端同步命令的socket】
 class EventLoop
 {
 public:
-    EventLoop(char *root,ThreadPool *threadPool,string ip = "127.0.0.1");
+    EventLoop(ThreadPool *threadPool);
     ~EventLoop();
     void loop_once();
 private:
-    string rootDir;    //要同步的文件夹
     ThreadPool *threadPool;
-    string ip;          //服务端的ip地址
     MutexLock mutex;    //互斥锁
     Condition cond;     //条件变量
+    ParseConfig *pc;
+    string rootDir;    //要同步的文件夹
+    string ip;          //服务端的ip地址
     muduo::net::Buffer inputBuffer[3];
     Codec codec;
     TimerHeap timerHeap;
@@ -61,6 +63,19 @@ private:
     TcpSocket tcpSocket[3];
     int ControlSocket = -1; //控制通道socket
     int sockfd[3];  //三个socket
+
+    unordered_map<int,string> cookieMap;    //cookie和原文件名的map
+    unordered_map<int,string> dirmap;  //wd和目录的map
+    //存储文件socket的状态
+    unordered_map<int,SocketStatePtr>  socket_stateMap;
+    //存储0.2s内有操作的文件,在完成执行函数后就erase掉
+    unordered_map<string,TimerId> fileopMap;
+    string ignore_File; //接收服务端的命令修改的文件，inotify处理时忽略掉此文件
+
+    static const int MASK = IN_MODIFY | IN_CREATE | IN_MOVED_FROM | IN_MOVED_TO |
+            IN_DELETE | IN_DELETE_SELF;    //要监听的事件
+    static const int EVENT_SIZE = sizeof (struct inotify_event);
+    static const int BUF_LEN = 1024 * ( EVENT_SIZE + 16 );
 
     //初始化监听socket，并指定相关的回调函数
     void initSocketEpoll();
@@ -77,23 +92,11 @@ private:
 
     //接收到相应protobuf的处理函数
     void onIsControl(int socketfd,MessagePtr message);
-    void onSyncInfo(int socketfd,MessagePtr message);
-    void onSendFile(int socketfd,sendfilePtr message);
+    void onSyncInfo(int socketfd,SyncInfoPtr message);
+    void onSendFile(int socketfd,SendFilePtr message);
     void onFileInfo(int socketfd,FileInfoPtr message);
 
-    unordered_map<int,string> cookieMap;    //cookie和原文件名的map
-    unordered_map<int,string> dirmap;  //wd和目录的map
-    //存储文件socket的状态(是否可发送)true为空闲
-    unordered_map<int,SocketStatePtr>  socket_stateMap;
-    //存储0.2s内有操作的文件,在完成执行函数后就erase掉
-    unordered_map<string,TimerId> fileopMap;
-
-    static const int MASK = IN_MODIFY | IN_CREATE | IN_MOVED_FROM | IN_MOVED_TO |
-            IN_DELETE | IN_DELETE_SELF;    //要监听的事件
-    static const int EVENT_SIZE = sizeof (struct inotify_event);
-    static const int BUF_LEN = 1024 * ( EVENT_SIZE + 16 );
-
-    void watch_init(int mask,char *root);   //初始化监听目录
+    void watch_init(int mask, const char *root);   //初始化监听目录
     void addWatch(const char *dir, int fd, int mask);       //递归添加监听目录
     char buffer[BUF_LEN];
     void doAction();            //根据inotify的事件采取行动

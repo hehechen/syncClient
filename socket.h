@@ -12,11 +12,13 @@ public:
     int connect(string ip,int port);
     void shutdown();
     int getSocket() {   return socket_fd;   }
+    void setKeepalive();
 private:
     struct sockaddr_in servaddr;
     int socket_fd;
     string ip;  //对方的ip和端口
     int port;
+
 
 };
 
