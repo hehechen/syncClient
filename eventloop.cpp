@@ -52,6 +52,21 @@ void EventLoop::loop_once()
         }
     }
 }
+/**
+ * @brief EventLoop::isRemoved 查询tid_fileMaps,查看tid线程正在发送的文件是否已被删除
+ * @param tid
+ * @param filename
+ * @return
+ */
+bool EventLoop::isRemoved(pthread_t tid, string filename)
+{
+    bool ret = true;
+    get_tidMapsLock();
+    if(tid_fileMaps[tid] == filename)
+        ret = false;
+    free_tidMapsLock();
+    return ret;
+}
 //有数据到来，判断是消息还是文件数据
 void EventLoop::onMessage(int socketfd,muduo::net::Buffer *inputBuffer)
 {
@@ -96,7 +111,7 @@ void EventLoop::initSocketEpoll()
     codec.registerCallback<filesync::FileInfo>(std::bind(&EventLoop::onFileInfo,this,
                                                          std::placeholders::_1,std::placeholders::_2));
     codec.registerCallback<filesync::SyncInfo>(std::bind(&EventLoop::onSyncInfo,this,
-                                                          std::placeholders::_1,std::placeholders::_2));
+                                                         std::placeholders::_1,std::placeholders::_2));
 
 }
 
@@ -214,13 +229,16 @@ void EventLoop::onSendFile(int socketfd, SendFilePtr message)
             while((send_sockfd = getIdleSocket()) == -1)
                 cond.wait();
             ssptr = socket_stateMap[send_sockfd];
-            ssptr->isIdle = false;
         }
+        ssptr->isIdle = false;
+        ssptr->tid = pthread_self();
         string localname = rootDir+message->filename();
         string remotename = message->filename();
-        sysutil::sendfileWithproto(send_sockfd,localname.c_str(),remotename.c_str());
+        tid_fileMaps[pthread_self()] = localname;
+        sysutil::sendfileWithproto(send_sockfd,localname.c_str(),remotename.c_str(),this);
         //将socket设为空闲并唤醒其它在等待的线程
         ssptr->isIdle = true;
+        ssptr->tid = -1;
         cond.notify();
     };
     threadPool->AddTask(std::move(func_send));
@@ -304,10 +322,10 @@ void EventLoop::doAction()
             {
                 string parDir = dirmap[event->wd];
                 string filename = std::move(parDir + string(event->name));
-                //先判断过去0.2s是否有对相同文件的修改
+                //先判断过去1.2s是否有对相同文件的修改
                 auto it = fileopMap.find(filename);
-                //在0.2s后执行
-                TimerId id = timerHeap.runAfter(500000,
+                //在1.2s后执行
+                TimerId id = timerHeap.runAfter(1200000,
                                                 std::bind(&EventLoop::handle_modify,this,filename));
                 //更新fileopMap
                 if(it != fileopMap.end())
@@ -330,7 +348,11 @@ void EventLoop::doAction()
                     handle_create((filename+"/"),true);
                 }
                 else
-                    handle_create(filename,false);
+                { //在1.2s后执行
+                    TimerId id = timerHeap.runAfter(1200000,
+                                   std::bind(&EventLoop::handle_create,this,filename,false));
+                    fileopMap[filename] = id;
+                }
             }
             if(event->mask & IN_DELETE)
             {
@@ -422,6 +444,18 @@ void EventLoop::handle_delete(string filename,bool isDir)
 {
     if(filename != ignore_File)
     {
+        for(auto it=socket_stateMap.begin();it!=socket_stateMap.end();++it)
+        {
+            if(!it->second->isIdle && it->second->tid!=-1)
+            {
+                if(tid_fileMaps[it->second->tid] != "")
+                {
+                    get_tidMapsLock();
+                    tid_fileMaps[it->second->tid] = "";
+                    free_tidMapsLock();
+                }
+            }
+        }
         //发送SyncInfo信息给服务端
         sysutil::send_SyncInfo(ControlSocket,3,rootDir,filename);
         if(isDir)

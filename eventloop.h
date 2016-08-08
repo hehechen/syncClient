@@ -28,6 +28,7 @@ struct SocketState
     muduo::net::Buffer *inputBuffer = NULL;    //应用层的输入缓冲区
     int totalSize = 0;
     int remainSize = 0;
+    pthread_t tid = -1;                //正在执行此socket的发送任务的tid
     string filename;        //本地文件路径包括文件名
 };
 
@@ -46,6 +47,12 @@ public:
     EventLoop(ThreadPool *threadPool);
     ~EventLoop();
     void loop_once();
+    //该线程发送的文件是否已被删除
+    bool isRemoved(pthread_t tid,string filename);
+    int getControlSocket()  {return ControlSocket;}
+    string getRootDir() {return rootDir;}
+    void get_tidMapsLock()  {tid_fileMapsLock.lock();}
+    void free_tidMapsLock() {tid_fileMapsLock.unlock();}
 private:
     ThreadPool *threadPool;
     MutexLock mutex;    //互斥锁
@@ -64,6 +71,10 @@ private:
     int ControlSocket = -1; //控制通道socket
     int sockfd[3];  //三个socket
 
+    MutexLock syncInfoLock;
+    unordered_map<pthread_t,string> tid_fileMaps; //tid和正在发送的文件
+    MutexLock tid_fileMapsLock;
+
     unordered_map<int,string> cookieMap;    //cookie和原文件名的map
     unordered_map<int,string> dirmap;  //wd和目录的map
     //存储文件socket的状态
@@ -71,6 +82,7 @@ private:
     //存储0.2s内有操作的文件,在完成执行函数后就erase掉
     unordered_map<string,TimerId> fileopMap;
     string ignore_File; //接收服务端的命令修改的文件，inotify处理时忽略掉此文件
+
 
     static const int MASK = IN_MODIFY | IN_CREATE | IN_MOVED_FROM | IN_MOVED_TO |
             IN_DELETE | IN_DELETE_SELF;    //要监听的事件

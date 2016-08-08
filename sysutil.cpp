@@ -7,6 +7,7 @@
 using namespace std;
 namespace sysutil{
 
+MutexLock syncInfoLock;
 
 /**
  * read_timeout - 读超时检测函数，不含读操作
@@ -235,8 +236,9 @@ void fileRecvfromBuf(const char *filename,const char *buf,int size)
  * @param sockfd
  * @param localname 本地路径
  * @param remotename    不包含顶层文件夹的文件名
+ * @param loop
  */
-void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
+void sendfileWithproto(int sockfd,const char* localname,const char *remotename,EventLoop *loop)
 {
     int fd = open(localname,O_RDONLY);
     if(-1 == fd)
@@ -248,7 +250,9 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
         CHEN_LOG(WARN,"failed to open file");
         return;
     }
-    int bytes_to_send = sbuf.st_size; //  文件大小
+    int total_size;
+    int bytes_to_send;
+    total_size = bytes_to_send = sbuf.st_size; //  文件大小
     //先发送fileInfo信息
     filesync::FileInfo msg;
     msg.set_size(bytes_to_send);
@@ -261,6 +265,13 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
     //开始传输
     while(bytes_to_send)
     {
+        if(loop->isRemoved(pthread_self(),localname))
+        {
+            send_SyncInfo(loop->getControlSocket(),3,loop->getRootDir(),
+                          localname,"",total_size-bytes_to_send);
+            return;
+        }
+
         int num_this_time = bytes_to_send > 4096 ? 4096:bytes_to_send;
         ret = sendfile(sockfd,fd,NULL,num_this_time);//不会返回EINTR,ret是发送成功的字节数
         if (-1 == ret)
@@ -275,13 +286,16 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename)
     close(fd);
 }
 /**
- * @brief send_SyncInfo  发送SyncInfo信息
+ * @brief send_SyncInfo  发送SyncInfo信息，线程安全
  * @param socketfd
- * @param id
- * @param filename
+ * @param id    0是创建文件夹，1是create文件，2是modify,3是删除，4是重命名
+ * @param rootDir
+ * @param filename      全路经
  * @param newname       新文件名，发送重命名信息时才用
+ * @param removedSize   删除正在发送的文件时，已发送的大小
  */
-void send_SyncInfo(int socketfd,int id,string rootDir,string filename,string newname)
+void send_SyncInfo(int socketfd,int id,string rootDir,string filename,
+                                        string newname,int removedSize)
 {
     filesync::SyncInfo msg;
     if(id==1 || id==2)
@@ -294,10 +308,13 @@ void send_SyncInfo(int socketfd,int id,string rootDir,string filename,string new
         remoteNewname = newname.substr(rootDir.size());
     msg.set_id(id);
     msg.set_filename(remoteName);
+    msg.set_size(removedSize);
     if(4 == id) //重命名
         msg.set_newfilename(remoteNewname);
     string send = Codec::enCode(msg);
+    syncInfoLock.lock();
     sysutil::writen(socketfd,send.c_str(),send.size());
+    syncInfoLock.unlock();
 }
 /**
  * @brief make_Init 客户端第一次上线，构建Init信息

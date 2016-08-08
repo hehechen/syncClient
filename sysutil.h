@@ -2,6 +2,8 @@
 #define SYSUTIL_H
 
 #include "common.h"
+#include "mutexlock.h"
+#include "eventloop.h"
 #include <iostream>
 #include <string>
 #include "protobuf/filesync.pb.h"
@@ -25,10 +27,10 @@ namespace sysutil{
     //从应用层缓冲区读取文件数据，append到文件后面
     void fileRecvfromBuf(const char *filename, const char *buf, int size);
     //先发送fileInfo信息再发送文件内容
-    void sendfileWithproto(int sockfd, const char *localname, const char *remotename);
+    void sendfileWithproto(int sockfd, const char *localname, const char *remotename, EventLoop *loop);
     //发送syncInfo信息
     void send_SyncInfo(int socketfd, int id, std::__cxx11::string rootDir, std::string filename,
-                                        std::string newname = "");
+                                        std::string newname = "", int removedSize=-1);
     void make_Init(int socketfd,std::string root,std::string dir,filesync::Init *msg_init);
     //同步整个文件夹
     void sync_Dir(int socketfd, std::string root, std::string dir);

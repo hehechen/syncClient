@@ -17,6 +17,7 @@ ThreadPool::ThreadPool(int threadNum):threadNum(threadNum)
 void *ThreadPool::threadFunc(void *data)
 {
     pthread_t tid = pthread_self();
+    SyncTask task;
     while (1)
     {
         {
@@ -25,13 +26,13 @@ void *ThreadPool::threadFunc(void *data)
             {
                 cond.wait();
             }
-            CHEN_LOG(DEBUG,"tid %lu run", tid);
             //取出一个任务并处理之
-            SyncTask task = std::move(taskQueue.front());
-            task(); /** 执行任务 */
+            task = std::move(taskQueue.front());
             taskQueue.pop();
-            CHEN_LOG(DEBUG,"tid:%lu idle", tid);
         }
+        CHEN_LOG(DEBUG,"tid %lu run", tid);
+        task(); /** 执行任务 */
+        CHEN_LOG(DEBUG,"tid:%lu idle", tid);
     }
     return (void*)0;
 }
