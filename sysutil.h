@@ -25,7 +25,7 @@ namespace sysutil{
     void fileSend(int desSocket, const char *filename);
     void fileRecv(int recvSocket, char *filename, int size);
     //从应用层缓冲区读取文件数据，append到文件后面
-    void fileRecvfromBuf(const char *filename, const char *buf, int size);
+    void fileRecvfromBuf(const char *filename,const char *buf,int size);
     //先发送fileInfo信息再发送文件内容
     void sendfileWithproto(int sockfd, const char *localname, const char *remotename, EventLoop *loop);
     //发送syncInfo信息

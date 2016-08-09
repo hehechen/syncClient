@@ -227,7 +227,7 @@ void fileRecvfromBuf(const char *filename,const char *buf,int size)
     }
     lseek(fd,0,SEEK_END);
     if(write(fd,buf,size) < 0)
-        CHEN_LOG(ERROR,"write file error");
+        CHEN_LOG(ERROR,"write file %s error",filename);
     close(fd);
 }
 
@@ -289,7 +289,6 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename,E
  * @brief send_SyncInfo  发送SyncInfo信息，线程安全
  * @param socketfd
  * @param id    0是创建文件夹，1是create文件，2是modify,3是删除，4是重命名
- * @param rootDir
  * @param filename      全路经
  * @param newname       新文件名，发送重命名信息时才用
  * @param removedSize   删除正在发送的文件时，已发送的大小

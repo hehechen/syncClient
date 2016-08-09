@@ -25,11 +25,12 @@ struct SocketState
 {
     bool isIdle = true;    //是否可发送
     bool isRecving = false; //是否正在接收文件
+    bool isRemoved = false; //接收到一半文件收到删除命令
     muduo::net::Buffer *inputBuffer = NULL;    //应用层的输入缓冲区
     int totalSize = 0;
     int remainSize = 0;
     pthread_t tid = -1;                //正在执行此socket的发送任务的tid
-    string filename;        //本地文件路径包括文件名
+    string filename;        //正在接收的文件名
 };
 
 typedef shared_ptr<SocketState> SocketStatePtr ;
@@ -71,7 +72,6 @@ private:
     int ControlSocket = -1; //控制通道socket
     int sockfd[3];  //三个socket
 
-    MutexLock syncInfoLock;
     unordered_map<pthread_t,string> tid_fileMaps; //tid和正在发送的文件
     MutexLock tid_fileMapsLock;
 

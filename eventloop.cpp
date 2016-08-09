@@ -112,14 +112,20 @@ void EventLoop::initSocketEpoll()
                                                          std::placeholders::_1,std::placeholders::_2));
     codec.registerCallback<filesync::SyncInfo>(std::bind(&EventLoop::onSyncInfo,this,
                                                          std::placeholders::_1,std::placeholders::_2));
-
+    for(int i=0;i<3;i++)
+    {
+        //发送登录信息
+        filesync::SignIn msg;
+        msg.set_username(pc->getUsername());
+        msg.set_password(pc->getPassword());
+        string send = Codec::enCode(msg);
+        sysutil::writen(sockfd[i],send.c_str(),send.size());
+    }
 }
 
 void EventLoop::init()
 {
     filesync::Init msg;
-    msg.set_username(pc->getUsername());
-    msg.set_password(pc->getPassword());
     sysutil::make_Init(ControlSocket,rootDir,rootDir,&msg);
     string send = Codec::enCode(msg);
     sysutil::writen(ControlSocket,send.c_str(),send.size());
@@ -141,6 +147,20 @@ void EventLoop::recvFile(SocketStatePtr &ssptr, muduo::net::Buffer *inputBuffer)
         ssptr->isRecving = false;
         ssptr->remainSize = 0;
         ssptr->totalSize = 0;
+        if(ssptr->isRemoved)
+            remove(ssptr->filename.c_str());
+        else
+        {
+            //隐藏文件改名
+            int pos = ssptr->filename.find_last_of('/');
+            string parDir = ssptr->filename.substr(0,pos+1);
+            string subfile = ssptr->filename.substr(pos+1);
+            string filename = parDir+subfile.substr(1);
+            ignore_File = filename;
+            if(rename(ssptr->filename.c_str(),filename.c_str()) < 0)
+                CHEN_LOG(ERROR,"rename %s error",ssptr->filename.c_str());
+        }
+        ssptr->isRemoved = false;
         ssptr->filename.clear();
     }
     else
@@ -204,6 +224,25 @@ void EventLoop::onSyncInfo(int socketfd, SyncInfoPtr message)
             sprintf(rmCmd,"rm -rf %s",localname.c_str());
             system(rmCmd);
         }
+        int pos = message->filename().find_last_of('/');
+        string parDir = message->filename().substr(0,pos+1);
+        string subfile = message->filename().substr(pos+1);
+        string filename = rootDir+parDir+"."+subfile;
+        int sendSize = message->size();
+        if(sendSize > 0)
+        {
+            for(int i=0;i<3;i++)
+            {//客户端接收到一半收到删除指令
+                if(sockfd[i] != ControlSocket && socket_stateMap[sockfd[i]]->filename==filename)
+                {
+                    SocketStatePtr ssptr = socket_stateMap[sockfd[i]];
+                    //已发送的减掉已接收的
+                    ssptr->remainSize = sendSize-(ssptr->totalSize-ssptr->remainSize);
+                    ssptr->totalSize = sendSize;
+                    ssptr->isRemoved = true;
+                }
+            }
+        }
         break;
     }
     case 4:
@@ -245,12 +284,24 @@ void EventLoop::onSendFile(int socketfd, SendFilePtr message)
 }
 //接收到fileInfo消息，设置socket_stateMap，注意此时消息已从Buffer中清除
 void EventLoop::onFileInfo(int socketfd, FileInfoPtr message)
-{
+{//接收文件时文件名前面加.
+    int pos = message->filename().find_last_of('/');
+    string parDir = message->filename().substr(0,pos+1);
+    string subfile = message->filename().substr(pos+1);
+    string filename = rootDir+parDir+"."+subfile;
+
     SocketStatePtr ssptr = socket_stateMap[socketfd];
     ssptr->isRecving = true;
-    ssptr->filename = std::move(rootDir+message->filename());
+    ssptr->filename = filename;
     ssptr->totalSize = ssptr->remainSize = message->size();
     CHEN_LOG(DEBUG,"ready to receive file %s",ssptr->filename.c_str());
+    //如果同名文件存在则删除
+    if(access(ssptr->filename.c_str(),F_OK) == 0)
+    {
+        if(::remove(ssptr->filename.c_str()) < 0)
+            CHEN_LOG(ERROR,"remove error");
+        ignore_File = ssptr->filename;
+    }
     recvFile(ssptr,ssptr->inputBuffer);
 }
 
@@ -318,6 +369,8 @@ void EventLoop::doAction()
                 else
                     CHEN_LOG(ERROR,"can't find rename cookie");
             }
+            if(event->name[0] == '.')
+                return; //隐藏文件跳过
             if(event->mask & IN_MODIFY)
             {
                 string parDir = dirmap[event->wd];
@@ -350,7 +403,7 @@ void EventLoop::doAction()
                 else
                 { //在1.2s后执行
                     TimerId id = timerHeap.runAfter(1200000,
-                                   std::bind(&EventLoop::handle_create,this,filename,false));
+                                                    std::bind(&EventLoop::handle_create,this,filename,false));
                     fileopMap[filename] = id;
                 }
             }
@@ -430,7 +483,7 @@ void EventLoop::handle_modify(string filename)
 
 void EventLoop::handle_rename(string oldname,string newname)
 {
-    if(oldname != ignore_File)
+    if(oldname != ignore_File && newname != ignore_File)
     {
         //发送SyncInfo重命名信息给服务端
         sysutil::send_SyncInfo(ControlSocket,4,rootDir,oldname,newname);
@@ -445,7 +498,7 @@ void EventLoop::handle_delete(string filename,bool isDir)
     if(filename != ignore_File)
     {
         for(auto it=socket_stateMap.begin();it!=socket_stateMap.end();++it)
-        {
+        {//如果正在发送，告知发送线程
             if(!it->second->isIdle && it->second->tid!=-1)
             {
                 if(tid_fileMaps[it->second->tid] != "")
