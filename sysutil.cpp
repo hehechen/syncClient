@@ -46,7 +46,7 @@ void fileRecvfromBuf(const char *filename,const char *buf,int size)
     int fd = open(filename, O_CREAT | O_WRONLY, 0666);
     if (fd == -1)
     {
-        CHEN_LOG(ERROR,"Could not create file %s",filename);
+        CHEN_LOG(WARN,"Could not create file %s",filename);
         return;
     }
     lseek(fd,0,SEEK_END);
@@ -118,7 +118,7 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename,E
  * @param removedSize   删除正在发送的文件时，已发送的大小
  */
 void send_SyncInfo(int socketfd,int id,string rootDir,string filename,
-                                        string newname,int removedSize)
+                   string newname,int removedSize)
 {
     filesync::SyncInfo msg;
     if(id==1 || id==2)
@@ -257,6 +257,32 @@ string getFileMd5(string filePath)
     localFile.close();
     QString md5 = ch.result().toHex();
     return md5.toStdString();
+}
+//给文件名前面加上.
+string getRemovedFilename(string rootDir,string remoteName)
+{
+    int pos = remoteName.find_last_of('/');
+    string parDir = remoteName.substr(0,pos+1);
+    string subfile = remoteName.substr(pos+1);
+    string filename = rootDir+parDir+"."+subfile;
+    while(access(filename.c_str(),F_OK) != 0)
+    {
+        pos = filename.find_last_of('/');
+        parDir = filename.substr(0,pos+1);
+        subfile = filename.substr(pos+1);
+        filename = rootDir+parDir+"."+subfile;;
+    }
+    return filename;
+}
+//把文件名前面的.都去掉
+string getOriginName(string filename)
+{
+    int pos = filename.find_last_of('/')+1;
+    string parDir = filename.substr(0,pos);
+    while(pos<filename.size() && filename[pos]=='.')
+        pos++;
+    string subfile = filename.substr(pos);
+    return parDir+subfile;
 }
 
 }

@@ -28,5 +28,9 @@ namespace sysutil{
     void sync_Dir(int socketfd, std::string root, std::string dir);
     //利用qt库获取md5，支持大文件
     std::string getFileMd5(std::string filePath);
+
+    std::string getRemovedFilename(string rootDir,string remoteName);
+    //把文件名前面的.都去掉
+    string getOriginName(string filename);
 }
 #endif // SYSUTIL_H
