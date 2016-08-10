@@ -2,6 +2,7 @@
 #define EVENTLOOP_H
 
 #include<iostream>
+#include <list>
 #include <sys/epoll.h>
 #include<unordered_map>
 #include<sys/inotify.h>
@@ -27,6 +28,7 @@ struct SocketState
     bool isRecving = false; //是否正在接收文件
     bool isRemoved = false; //接收到一半文件收到删除命令
     muduo::net::Buffer *inputBuffer = NULL;    //应用层的输入缓冲区
+    int socketfd;
     int totalSize = 0;
     int remainSize = 0;
     pthread_t tid = -1;                //正在执行此socket的发送任务的tid
@@ -57,6 +59,7 @@ public:
 private:
     ThreadPool *threadPool;
     MutexLock mutex;    //互斥锁
+    MutexLock idleSocketMutex;    //获取空闲socket时的锁
     Condition cond;     //条件变量
     ParseConfig *pc;
     string rootDir;    //要同步的文件夹
@@ -81,7 +84,7 @@ private:
     unordered_map<int,SocketStatePtr>  socket_stateMap;
     //存储0.2s内有操作的文件,在完成执行函数后就erase掉
     unordered_map<string,TimerId> fileopMap;
-    string ignore_File; //接收服务端的命令修改的文件，inotify处理时忽略掉此文件
+    list<string> ignore_Files; //接收服务端的命令修改的文件，inotify处理时忽略掉此文件
 
 
     static const int MASK = IN_MODIFY | IN_CREATE | IN_MOVED_FROM | IN_MOVED_TO |
