@@ -93,6 +93,7 @@ void sendfileWithproto(int sockfd,const char* localname,const char *remotename,E
         {
             send_SyncInfo(loop->getControlSocket(),3,loop->getRootDir(),
                           localname,"",total_size-bytes_to_send);
+            CHEN_LOG(INFO,"SEND SIZE:%d",total_size-bytes_to_send);
             return;
         }
 

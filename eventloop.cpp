@@ -532,7 +532,7 @@ void EventLoop::handle_delete(string filename,bool isDir)
     {//如果正在发送，告知发送线程
         if(!it->second->isIdle && it->second->tid!=-1)
         {
-            if(tid_fileMaps[it->second->tid] != "")
+            if(tid_fileMaps[it->second->tid] == filename)
             {
                 get_tidMapsLock();
                 tid_fileMaps[it->second->tid] = "";
