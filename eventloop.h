@@ -98,6 +98,8 @@ private:
     void init();
     //有消息到来时的执行函数
     void onMessage(int socketfd, muduo::net::Buffer *inputBuffer);
+    //有带外数据到来时的处理函数
+    void onOOB(int socket);
     //接收到服务端同步命令的回调函数
     void recvcmdCallback(int socketfd,MessagePtr message);
 

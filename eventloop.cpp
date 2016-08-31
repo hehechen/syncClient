@@ -43,7 +43,11 @@ void EventLoop::loop_once()
                 doAction();
             }
         }
-        else
+        else if(evs[i].events == EPOLLPRI)
+        {//有带外数据
+            onOOB(evs[i].data.fd);
+        }
+        else if(evs[i].events == EPOLLIN)
         {
             muduo::net::Buffer *inputBuffer = socket_stateMap[evs[i].data.fd]->inputBuffer;
             if(inputBuffer->readFd(evs[i].data.fd,NULL) < 0)
@@ -76,6 +80,17 @@ void EventLoop::onMessage(int socketfd,muduo::net::Buffer *inputBuffer)
     else            //不管是控制通道还是数据传输通道都执行此函数
         codec.parse(socketfd,inputBuffer);
 }
+//有带外数据，说明正在接收的文件被服务端删除
+void EventLoop::onOOB(int socket)
+{
+    char buf[10];
+    recv(socket,buf,sizeof(buf),MSG_OOB);
+    int len = atoi(buf);    //已发送文件的长度
+    SocketStatePtr ptr = socket_stateMap[socket];
+    ptr->totalSize = ptr->remainSize = len;
+    ptr->isRemoved = true;
+    recvFile(ptr,ptr->inputBuffer);
+}
 
 /**
  * @brief EventLoop::initSocketEpoll    初始化监听socket并注册解码器的回调函数
@@ -91,7 +106,7 @@ void EventLoop::initSocketEpoll()
         tcpSocket[i].setKeepalive();
         struct epoll_event ev;
         memset(&ev,0,sizeof(ev));
-        ev.events = EPOLLIN;
+        ev.events = EPOLLIN | EPOLLPRI;
         ev.data.fd =  sockfd[i];
         int ctl = epoll_ctl(epoll_fd,EPOLL_CTL_ADD, sockfd[i],&ev);     //监控inotify
         if(ctl<0)

@@ -30,7 +30,9 @@ SOURCES += main.cpp \
     TimerHeap.cpp \
     test/timerheaptest.cpp \
     parseconfig.cpp \
-    str_tool.cpp
+    str_tool.cpp \
+    rsync.cpp \
+    test/oobClient.cpp
 
 HEADERS += \
     common.h \
@@ -46,7 +48,8 @@ HEADERS += \
     TimeStamp.h \
     TimerHeap.h \
     parseconfig.h \
-    str_tool.h
+    str_tool.h \
+    rsync.h
 
 DISTFILES += \
     protobuf/filesync.proto
